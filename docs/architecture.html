@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Architecture Deep Dive &mdash; SPIFFE + MCP OAuth</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-okaidia.min.css">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<nav class="nav">
+  <div class="nav-inner">
+    <span class="nav-brand">SPIFFE + MCP OAuth</span>
+    <button class="hamburger" onclick="document.querySelector('.nav-links').classList.toggle('open')" aria-label="Menu">&#9776;</button>
+    <div class="nav-links">
+      <a href="index.html">Home</a>
+      <a href="concepts.html">Concepts</a>
+      <a href="architecture.html" class="active">Architecture</a>
+      <a href="deployment.html">Deployment</a>
+      <a href="auth-flows.html">Auth Flows</a>
+      <a href="troubleshooting.html">Troubleshooting</a>
+      <a href="testing.html">Testing</a>
+      <a href="product-manual.html">Product Manual</a>
+    </div>
+  </div>
+</nav>
+
+<main class="container">
+  <div class="breadcrumb"><a href="index.html">Home</a> &raquo; Architecture Deep Dive</div>
+
+  <h1>Architecture Deep Dive</h1>
+  <p>Complete reference for all 11 components, their interactions, namespace layout, networking model, and the cryptographic trust chain.</p>
+
+  <!-- Component Reference Table -->
+  <h2>Component Reference</h2>
+  <table>
+    <thead>
+      <tr><th>Component</th><th>Kind</th><th>Namespace</th><th>Image</th><th>Purpose</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>SPIRE Server</td><td>StatefulSet</td><td>spire-system</td><td>ghcr.io/spiffe/spire-server</td><td>Central authority, signs SVIDs, manages registration entries</td></tr>
+      <tr><td>SPIRE Agent</td><td>DaemonSet</td><td>spire-system</td><td>ghcr.io/spiffe/spire-agent</td><td>Node-level agent, performs workload attestation, delivers SVIDs</td></tr>
+      <tr><td>OIDC Discovery Provider</td><td>Deployment</td><td>spire-system</td><td>ghcr.io/spiffe/oidc-discovery-provider</td><td>Serves JWKS and OIDC config for external verifiers</td></tr>
+      <tr><td>SPIFFE CSI Driver</td><td>DaemonSet</td><td>spire-system</td><td>ghcr.io/spiffe/spiffe-csi-driver</td><td>Mounts Workload API socket into pods</td></tr>
+      <tr><td>Controller Manager</td><td>Sidecar (in Server pod)</td><td>spire-system</td><td>ghcr.io/spiffe/spire-controller-manager</td><td>Auto-creates registration entries from ClusterSPIFFEID CRDs</td></tr>
+      <tr><td>HTTP Proxy</td><td>Sidecar/Deployment</td><td>spire-system</td><td>nginx or envoy</td><td>HTTP frontend for OIDC Discovery (TLS termination)</td></tr>
+      <tr><td>Keycloak</td><td>StatefulSet</td><td>mcp-demo</td><td>keycloak-spiffe:latest (custom)</td><td>OAuth2 Authorization Server with SPIFFE SPIs</td></tr>
+      <tr><td>PostgreSQL</td><td>StatefulSet</td><td>mcp-demo</td><td>postgres:16-alpine</td><td>Keycloak backend datastore</td></tr>
+      <tr><td>MCP Client</td><td>Deployment</td><td>mcp-demo</td><td>python:3.12-slim</td><td>Demo AI agent that authenticates via SPIFFE</td></tr>
+      <tr><td>MCP Server</td><td>Deployment</td><td>mcp-demo</td><td>python:3.12-slim</td><td>Demo resource server</td></tr>
+      <tr><td>Test Runner</td><td>Deployment</td><td>mcp-demo</td><td>python:3.12-slim</td><td>Runs pytest test suite inside the cluster</td></tr>
+    </tbody>
+  </table>
+
+  <!-- System Overview Diagram -->
+  <h2>System Overview Diagram</h2>
+  <div class="diagram">
+    <div class="diagram-title">Kind Cluster: spiffe-mcp-demo</div>
+    <div class="cluster-box" data-label="Kind Cluster (2 nodes: control-plane + worker)">
+      <div class="ns-row">
+        <div class="ns-box" data-ns="spire-system">
+          <div class="component server"><span class="component-icon">&#9881;</span> <strong>SPIRE Server</strong> &mdash; StatefulSet, 1 replica</div>
+          <div class="component agent"><span class="component-icon">&#128274;</span> <strong>SPIRE Agent</strong> &mdash; DaemonSet (1 per node)</div>
+          <div class="component"><span class="component-icon">&#128273;</span> <strong>OIDC Discovery</strong> &mdash; serves /.well-known + /keys</div>
+          <div class="component"><span class="component-icon">&#128190;</span> <strong>CSI Driver</strong> &mdash; DaemonSet, mounts sockets</div>
+          <div class="component"><span class="component-icon">&#127760;</span> <strong>Controller Manager</strong> &mdash; sidecar in Server pod</div>
+          <div class="component"><span class="component-icon">&#128279;</span> <strong>HTTP Proxy</strong> &mdash; fronts OIDC for HTTP access</div>
+        </div>
+        <div class="ns-box" data-ns="mcp-demo">
+          <div class="component kc"><span class="component-icon">&#128272;</span> <strong>Keycloak</strong> &mdash; custom image with 2 SPIs</div>
+          <div class="component db"><span class="component-icon">&#128451;</span> <strong>PostgreSQL</strong> &mdash; Keycloak DB backend</div>
+          <div class="component"><span class="component-icon">&#129302;</span> <strong>MCP Client</strong> &mdash; AI agent (Python 3.12)</div>
+          <div class="component"><span class="component-icon">&#9881;</span> <strong>MCP Server</strong> &mdash; resource server</div>
+          <div class="component"><span class="component-icon">&#128202;</span> <strong>Test Runner</strong> &mdash; pytest (80 tests)</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Namespace Layout -->
+  <h2>Namespace Layout</h2>
+  <div class="diagram">
+    <div class="diagram-title">Cross-Namespace Interactions</div>
+    <div class="ns-row">
+      <div class="ns-box" data-ns="spire-system" style="background:#f8fbff">
+        <div class="component server">SPIRE Server</div>
+        <div class="component agent">SPIRE Agent</div>
+        <div class="component">CSI Driver</div>
+        <div class="component">OIDC Discovery Provider</div>
+        <div class="component">Controller Manager</div>
+        <div class="component">HTTP Proxy (oidc-http-proxy)</div>
+      </div>
+      <div class="ns-box" data-ns="mcp-demo" style="background:#f8fff8">
+        <div class="component kc">Keycloak</div>
+        <div class="component db">PostgreSQL</div>
+        <div class="component">MCP Client</div>
+        <div class="component">MCP Server</div>
+        <div class="component">Test Runner</div>
+      </div>
+    </div>
+    <div style="margin-top:1rem;">
+      <h4>Cross-Namespace Arrows</h4>
+      <ul>
+        <li><strong>CSI Driver &rarr; mcp-demo pods:</strong> Mounts Workload API socket into MCP Client, MCP Server, Test Runner</li>
+        <li><strong>OIDC Discovery &rarr; Keycloak:</strong> Keycloak's SPIFFE SPI fetches JWKS from OIDC Discovery Provider's HTTP proxy</li>
+        <li><strong>MCP Client &rarr; Keycloak:</strong> Posts token requests with JWT SVID as client_assertion</li>
+        <li><strong>Controller Manager &rarr; mcp-demo:</strong> Watches ClusterSPIFFEID CRDs, auto-registers entries for pods</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- Trust Chain -->
+  <h2>Trust Chain Flow</h2>
+  <div class="diagram">
+    <div class="diagram-title">Cryptographic Verification Pipeline</div>
+    <div class="pipeline">
+      <div>
+        <div class="pipeline-step">SPIRE CA</div>
+        <div class="pipeline-label">Root of trust</div>
+      </div>
+      <span class="pipeline-arrow">&rarr;</span>
+      <div>
+        <div class="pipeline-step teal">signs</div>
+        <div class="pipeline-label">&nbsp;</div>
+      </div>
+      <span class="pipeline-arrow">&rarr;</span>
+      <div>
+        <div class="pipeline-step">JWT SVID</div>
+        <div class="pipeline-label">5-min TTL</div>
+      </div>
+      <span class="pipeline-arrow">&rarr;</span>
+      <div>
+        <div class="pipeline-step teal">published via</div>
+        <div class="pipeline-label">&nbsp;</div>
+      </div>
+      <span class="pipeline-arrow">&rarr;</span>
+      <div>
+        <div class="pipeline-step light">OIDC JWKS</div>
+        <div class="pipeline-label">/keys endpoint</div>
+      </div>
+      <span class="pipeline-arrow">&rarr;</span>
+      <div>
+        <div class="pipeline-step teal">fetched by</div>
+        <div class="pipeline-label">&nbsp;</div>
+      </div>
+      <span class="pipeline-arrow">&rarr;</span>
+      <div>
+        <div class="pipeline-step">Keycloak SPI</div>
+        <div class="pipeline-label">Verifies sig</div>
+      </div>
+      <span class="pipeline-arrow">&rarr;</span>
+      <div>
+        <div class="pipeline-step teal">Access Token</div>
+        <div class="pipeline-label">Issued</div>
+      </div>
+    </div>
+    <div class="callout callout-info" style="margin-top:1rem;">
+      <strong>Key point:</strong> The signing key used by SPIRE Server is <em>never</em> shared with Keycloak. Keycloak only sees the <em>public</em> key via JWKS. This is the same trust model as any OIDC provider.
+    </div>
+  </div>
+
+  <!-- Networking -->
+  <h2>Networking Model</h2>
+  <div class="diagram">
+    <div class="diagram-title">Host &rarr; Cluster &rarr; Pod Network Path</div>
+    <div class="net-layers">
+      <div class="net-layer" style="background:#edf5fc; border-color:#3498db;">
+        <strong>Host (macOS)</strong>
+        <span class="port">localhost</span>
+      </div>
+      <div style="text-align:center; padding:.25rem 0; color:var(--teal); font-weight:700;">&darr; Docker network &darr;</div>
+      <div class="net-layer" style="background:#f5eef8; border-color:#9b59b6;">
+        <strong>Kind Container</strong> (Docker)
+        <span class="port">extraPortMappings</span>
+      </div>
+      <div style="text-align:center; padding:.25rem 0; color:var(--teal); font-weight:700;">&darr; K8s NodePort &darr;</div>
+      <div class="net-layer" style="background:#eaf7f0; border-color:var(--teal);">
+        <strong>Kubernetes Pod</strong>
+        <span class="port">containerPort</span>
+      </div>
+    </div>
+    <table style="margin-top:1.5rem;">
+      <thead>
+        <tr><th>Service</th><th>Host Port</th><th>NodePort</th><th>Pod Port</th><th>Protocol</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>Keycloak</td><td>30080</td><td>30080</td><td>8080</td><td>HTTP</td></tr>
+        <tr><td>OIDC Discovery</td><td>30443</td><td>30443</td><td>443</td><td>HTTPS</td></tr>
+      </tbody>
+    </table>
+    <div class="callout callout-info">
+      <strong>No ingress controller needed.</strong> Kind's <code>extraPortMappings</code> in the cluster config directly map host ports to NodePorts. No <code>kubectl port-forward</code> required either.
+    </div>
+  </div>
+
+  <!-- Custom SPIs Detail -->
+  <h2>Custom SPI Architecture</h2>
+
+  <h3>SPI 1: SVID Client Authenticator</h3>
+  <p>Provider ID: <code>client-spiffe-jwt</code></p>
+  <table>
+    <thead><tr><th>Class</th><th>Role</th></tr></thead>
+    <tbody>
+      <tr><td><code>SpiffeSvidClientAuthenticator</code></td><td>Entry point: intercepts token requests with <code>client_assertion_type=urn:ietf:params:oauth:client-assertion-type:jwt-spiffe</code></td></tr>
+      <tr><td><code>SpiffeSvidClientValidator</code></td><td>Fetches JWKS from SPIRE OIDC Discovery, validates JWT signature, verifies <code>iss</code> matches trust domain, <code>sub</code> is valid SPIFFE ID, <code>aud</code> matches realm URL</td></tr>
+      <tr><td><code>SpiffeSvidClientAuthUtil</code></td><td>Error response formatting and utility methods</td></tr>
+    </tbody>
+  </table>
+
+  <h3>SPI 2: SPIFFE Dynamic Client Registration</h3>
+  <p>Endpoint: <code>/realms/{realm}/clients-registrations/spiffe-dcr/register</code></p>
+  <table>
+    <thead><tr><th>Class</th><th>Role</th></tr></thead>
+    <tbody>
+      <tr><td><code>SpiffeDcrProvider</code></td><td>Custom DCR endpoint handler</td></tr>
+      <tr><td><code>SpiffeSoftwareStatementValidator</code></td><td>Validates software statement JWT against SPIRE JWKS</td></tr>
+      <tr><td><code>SpiffeClientConfigurator</code></td><td>Auto-configures registered client with SPIFFE auth method</td></tr>
+      <tr><td><code>SpiffeDcrRequest / Response</code></td><td>Request/response models with SPIFFE metadata</td></tr>
+    </tbody>
+  </table>
+
+  <h3>SPIRE Plugin: Software Statements</h3>
+  <p>A Go-based <code>CredentialComposer</code> plugin that enriches JWT SVIDs with DCR-compatible claims:</p>
+  <table>
+    <thead><tr><th>Claim Added</th><th>Value</th><th>Purpose</th></tr></thead>
+    <tbody>
+      <tr><td><code>jwks_url</code></td><td>SPIRE OIDC Discovery JWKS URL</td><td>Where to find the client's public key</td></tr>
+      <tr><td><code>client_auth</code></td><td><code>client-spiffe-jwt</code></td><td>Authentication method for the registered client</td></tr>
+    </tbody>
+  </table>
+
+  <!-- Build Pipeline -->
+  <h2>Docker Build Pipeline</h2>
+  <p>The custom Keycloak image is built in a 4-stage multi-stage Dockerfile:</p>
+  <pre><code class="language-bash"># Stage 1: Build SVID Client Authenticator SPI (Java/Maven)
+FROM maven:3.9-eclipse-temurin-17 AS build-svid-auth
+# Clone + mvn package
+
+# Stage 2: Build DCR SPI (Java/Maven)
+FROM maven:3.9-eclipse-temurin-17 AS build-dcr
+# Clone + mvn package
+
+# Stage 3: Build SPIRE Software Statements Plugin (Go 1.22)
+FROM golang:1.22 AS build-spire-plugin
+# Clone + make build
+
+# Stage 4: Final Keycloak image with all SPIs
+FROM quay.io/keycloak/keycloak:26.2.5
+COPY --from=build-svid-auth .../spiffe-svid-client-authenticator-*.jar /opt/keycloak/providers/
+COPY --from=build-dcr .../spiffe-dcr-spi-*.jar /opt/keycloak/providers/
+RUN /opt/keycloak/bin/kc.sh build</code></pre>
+
+  <!-- Key Config Values -->
+  <h2>Key Configuration Values</h2>
+  <table>
+    <thead><tr><th>Setting</th><th>Value</th></tr></thead>
+    <tbody>
+      <tr><td>Kind cluster name</td><td><code>spiffe-mcp-demo</code></td></tr>
+      <tr><td>Trust domain</td><td><code>example.org</code></td></tr>
+      <tr><td>SPIFFE ID format</td><td><code>spiffe://example.org/ns/{namespace}/sa/{service-account}</code></td></tr>
+      <tr><td>Keycloak realm</td><td><code>mcp-demo</code></td></tr>
+      <tr><td>JWT SVID TTL</td><td>5 minutes</td></tr>
+      <tr><td>Workload API socket</td><td><code>unix:///spiffe-workload-api/spire-agent.sock</code></td></tr>
+      <tr><td>OIDC issuer</td><td><code>https://oidc-discovery.example.org</code></td></tr>
+      <tr><td>Keycloak host URL</td><td><code>http://localhost:30080</code></td></tr>
+      <tr><td>OIDC host URL</td><td><code>http://localhost:30443</code></td></tr>
+    </tbody>
+  </table>
+
+</main>
+
+<footer class="footer">
+  <p>SPIFFE + MCP OAuth Authentication System &mdash; <a href="index.html">Home</a></p>
+</footer>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-bash.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-yaml.min.js"></script>
+</body>
+</html>

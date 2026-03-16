@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Product Manual &mdash; SPIFFE + MCP OAuth</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-okaidia.min.css">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<nav class="nav">
+  <div class="nav-inner">
+    <span class="nav-brand">SPIFFE + MCP OAuth</span>
+    <button class="hamburger" onclick="document.querySelector('.nav-links').classList.toggle('open')" aria-label="Menu">&#9776;</button>
+    <div class="nav-links">
+      <a href="index.html">Home</a>
+      <a href="concepts.html">Concepts</a>
+      <a href="architecture.html">Architecture</a>
+      <a href="deployment.html">Deployment</a>
+      <a href="auth-flows.html">Auth Flows</a>
+      <a href="troubleshooting.html">Troubleshooting</a>
+      <a href="testing.html">Testing</a>
+      <a href="product-manual.html" class="active">Product Manual</a>
+    </div>
+  </div>
+</nav>
+
+<main class="container">
+  <div class="breadcrumb"><a href="index.html">Home</a> &raquo; Product Manual</div>
+
+  <h1>Product Manual</h1>
+  <p>A non-technical guide to understanding, deploying, and using the SPIFFE + MCP OAuth authentication system.</p>
+
+  <!-- What This Does -->
+  <h2>What This System Does</h2>
+  <p>Imagine you have AI agents (like chatbots or automated tools) that need to access protected services. Normally, you'd give each agent a <strong>password</strong> (called a "client secret") to prove who they are. But passwords can be leaked, stolen, or forgotten to rotate.</p>
+
+  <p>This system replaces passwords with <strong>cryptographic identity cards</strong>. Each AI agent automatically receives a short-lived digital ID card (valid for just 5 minutes) that proves who they are based on <em>where they're running</em> &mdash; not based on a stored secret.</p>
+
+  <div class="card-grid">
+    <div class="card">
+      <h3>The Old Way</h3>
+      <ul>
+        <li>Store a password in each agent's config</li>
+        <li>Rotate passwords manually every few months</li>
+        <li>Risk: leaked passwords grant full access</li>
+        <li>No way to know which specific agent used a password</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>The New Way (This System)</h3>
+      <ul>
+        <li>No passwords stored anywhere</li>
+        <li>Identity cards auto-issued and auto-rotated every 5 minutes</li>
+        <li>Even if stolen, useless after 5 minutes</li>
+        <li>Every request tied to a specific agent identity</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- Prerequisites -->
+  <h2>What You Need Before Starting</h2>
+  <div class="callout callout-info">
+    <strong>Checklist:</strong> Make sure these are installed on your Mac before proceeding.
+  </div>
+
+  <table>
+    <thead><tr><th>Requirement</th><th>What It Is</th><th>How to Check</th></tr></thead>
+    <tbody>
+      <tr>
+        <td>Docker Desktop</td>
+        <td>Runs containers (the "virtual machines" our system uses)</td>
+        <td>Open Docker Desktop app &mdash; whale icon in menu bar should be running</td>
+      </tr>
+      <tr>
+        <td>Terminal / Command Line</td>
+        <td>Where you'll type commands</td>
+        <td>Open "Terminal" from Applications &gt; Utilities</td>
+      </tr>
+      <tr>
+        <td>Developer Tools</td>
+        <td>kind, kubectl, helm, jq &mdash; installed via Homebrew</td>
+        <td>Run: <code>kind version && kubectl version --client</code></td>
+      </tr>
+    </tbody>
+  </table>
+
+  <p>If the developer tools aren't installed, ask your engineer to run:</p>
+  <pre><code class="language-bash">brew install kind kubectl helm jq</code></pre>
+
+  <!-- One-Command Deploy -->
+  <h2>Deploying the System</h2>
+  <div class="callout callout-success">
+    <strong>One command does everything.</strong> Open Terminal, navigate to the project folder, and run:
+  </div>
+
+  <pre><code class="language-bash">./deploy-all.sh</code></pre>
+
+  <p>This takes approximately <strong>10-15 minutes</strong> and will:</p>
+  <ol>
+    <li>Create a local Kubernetes cluster</li>
+    <li>Install the identity system (SPIRE)</li>
+    <li>Build custom security components</li>
+    <li>Deploy the authentication server (Keycloak)</li>
+    <li>Deploy the AI agent demo workloads</li>
+  </ol>
+
+  <p>You'll see progress messages for each step. Wait for the final message:</p>
+  <pre><code class="language-bash">============================================
+  Deployment Complete!
+============================================</code></pre>
+
+  <!-- Verifying It Works -->
+  <h2>Verifying It Works</h2>
+  <p>After deployment, verify the system is working with these simple checks:</p>
+
+  <h3>Check 1: Is everything running?</h3>
+  <pre><code class="language-bash"># This should show pods in "Running" state
+kubectl -n mcp-demo get pods
+kubectl -n spire-system get pods</code></pre>
+  <p>All pods should show <code>Running</code> in the STATUS column.</p>
+
+  <h3>Check 2: Run the authentication demo</h3>
+  <pre><code class="language-bash">kubectl -n mcp-demo exec -it deploy/mcp-client -- bash /scripts/test-spiffe-auth.sh</code></pre>
+  <p>You should see:</p>
+  <ul>
+    <li>"Step 2: Fetch JWT SVID" &mdash; shows the agent got its identity card</li>
+    <li>"Step 3: Authenticate to Keycloak" &mdash; shows "SUCCESS! Got access token"</li>
+  </ul>
+
+  <h3>Check 3: Run the full test suite</h3>
+  <pre><code class="language-bash">./scripts/run-all-tests.sh</code></pre>
+  <p><strong>Expected result:</strong> "80 passed, 0 failed"</p>
+
+  <!-- Admin Console -->
+  <h2>Accessing the Admin Console</h2>
+  <p>Keycloak provides a web-based admin console where you can see registered clients, users, and authentication flows.</p>
+
+  <div class="card">
+    <h3>Open the Admin Console</h3>
+    <ol>
+      <li>Open your browser</li>
+      <li>Go to: <strong>http://localhost:30080/admin</strong></li>
+      <li>Login with: username <code>admin</code>, password <code>admin</code></li>
+    </ol>
+  </div>
+
+  <h3>What to See in the Admin Console</h3>
+  <table>
+    <thead><tr><th>Location</th><th>What You'll Find</th></tr></thead>
+    <tbody>
+      <tr><td>Realm selector (top-left)</td><td>Switch to <code>mcp-demo</code> realm</td></tr>
+      <tr><td>Clients</td><td>A client named <code>spiffe://example.org/ns/mcp-demo/sa/mcp-client</code></td></tr>
+      <tr><td>Client &gt; Credentials</td><td>Authenticator type: <code>client-spiffe-jwt</code> (not a password!)</td></tr>
+      <tr><td>Authentication &gt; Flows</td><td>A flow named <code>spiffe-clients</code> with the SPIFFE authenticator</td></tr>
+      <tr><td>Users</td><td>A user named <code>demo-user</code></td></tr>
+    </tbody>
+  </table>
+
+  <!-- Teardown -->
+  <h2>Shutting Down</h2>
+  <p>When you're done, clean everything up with one command:</p>
+  <pre><code class="language-bash">./teardown.sh</code></pre>
+  <p>This completely removes the cluster and all custom images. Nothing is left on your machine except the project files.</p>
+
+  <!-- FAQ -->
+  <h2>Frequently Asked Questions</h2>
+
+  <div class="card">
+    <h3>Q: Does this install anything permanently on my Mac?</h3>
+    <p><strong>No.</strong> Everything runs inside Docker containers. The <code>teardown.sh</code> script removes all containers and images. The only things on your Mac are Docker Desktop and the command-line tools (kind, kubectl, etc.).</p>
+  </div>
+
+  <div class="card">
+    <h3>Q: How much disk space does this use?</h3>
+    <p>Approximately <strong>5-8 GB</strong> of Docker images and container data. This is freed when you run <code>teardown.sh</code>.</p>
+  </div>
+
+  <div class="card">
+    <h3>Q: Can I run this on Windows or Linux?</h3>
+    <p>The system is designed for <strong>macOS</strong> but the underlying technology (Docker + Kind) works on Windows and Linux too. Minor path adjustments may be needed.</p>
+  </div>
+
+  <div class="card">
+    <h3>Q: Is this production-ready?</h3>
+    <p><strong>No, this is a demo/development setup.</strong> For production you'd need: TLS everywhere, proper certificate management, high-availability configurations, production-grade PostgreSQL, and stricter RBAC. The <em>architecture and authentication pattern</em> are production-ready; the <em>deployment configuration</em> is simplified for demo purposes.</p>
+  </div>
+
+  <div class="card">
+    <h3>Q: What happens if the 5-minute identity card expires?</h3>
+    <p>The agent simply requests a new one. This happens automatically. There's no manual intervention needed &mdash; it's like getting a new boarding pass every 5 minutes.</p>
+  </div>
+
+  <div class="card">
+    <h3>Q: What if Docker Desktop runs out of memory?</h3>
+    <p>Open Docker Desktop &gt; Settings &gt; Resources, and increase memory to at least <strong>8 GB</strong>. The system needs this for Keycloak + SPIRE + PostgreSQL to run comfortably.</p>
+  </div>
+
+  <div class="card">
+    <h3>Q: How do I see the authentication happening in real-time?</h3>
+    <p>Run the demo script and watch the output:</p>
+    <pre><code class="language-bash">kubectl -n mcp-demo exec -it deploy/mcp-client -- bash /scripts/test-spiffe-auth.sh</code></pre>
+    <p>It shows each step: fetching the identity card, sending it to Keycloak, and receiving the access token.</p>
+  </div>
+
+  <div class="card">
+    <h3>Q: Who made this?</h3>
+    <p>This implementation follows the reference architecture by <strong>Christian Posta</strong> and the IETF draft <code>draft-ietf-oauth-spiffe-client-auth</code>. The deployment automation and test suite were built specifically for this project.</p>
+  </div>
+
+  <!-- Glossary for Non-Technical -->
+  <h2>Plain English Glossary</h2>
+  <table>
+    <thead><tr><th>Term</th><th>Plain English</th></tr></thead>
+    <tbody>
+      <tr><td>SPIFFE</td><td>A standard for giving software its own identity card</td></tr>
+      <tr><td>SPIRE</td><td>The software that actually issues those identity cards</td></tr>
+      <tr><td>JWT SVID</td><td>The identity card itself &mdash; a signed digital document</td></tr>
+      <tr><td>Keycloak</td><td>The bouncer &mdash; checks identity cards and grants access</td></tr>
+      <tr><td>MCP</td><td>The protocol AI agents use to talk to tools and services</td></tr>
+      <tr><td>OAuth</td><td>The standard for "logging in" without sharing passwords</td></tr>
+      <tr><td>Kind</td><td>A mini Kubernetes cluster that runs inside Docker</td></tr>
+      <tr><td>Kubernetes</td><td>A system for running and managing containers</td></tr>
+      <tr><td>Container</td><td>A lightweight virtual machine for running one application</td></tr>
+      <tr><td>Pod</td><td>One or more containers running together in Kubernetes</td></tr>
+    </tbody>
+  </table>
+
+</main>
+
+<footer class="footer">
+  <p>SPIFFE + MCP OAuth Authentication System &mdash; <a href="index.html">Home</a></p>
+</footer>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-bash.min.js"></script>
+</body>
+</html>

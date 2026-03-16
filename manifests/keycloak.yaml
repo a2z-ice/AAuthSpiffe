@@ -1,0 +1,141 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: keycloak-realm-config
+  namespace: mcp-demo
+data:
+  realm-config.json: |
+    {
+      "realm": "mcp-demo",
+      "enabled": true,
+      "sslRequired": "none",
+      "registrationAllowed": false,
+      "attributes": {
+        "spiffe.trust.domain": "example.org",
+        "spiffe.jwks.url": "https://spire-spiffe-oidc-discovery-provider.spire-system.svc.cluster.local/keys"
+      },
+      "roles": {
+        "realm": [
+          { "name": "mcp-client", "description": "MCP Client Role" },
+          { "name": "mcp-server", "description": "MCP Server Role" }
+        ]
+      },
+      "users": [
+        {
+          "username": "demo-user",
+          "enabled": true,
+          "credentials": [{ "type": "password", "value": "demo-password", "temporary": false }],
+          "realmRoles": ["mcp-client"]
+        }
+      ],
+      "clients": [
+        {
+          "clientId": "spiffe://example.org/ns/mcp-demo/sa/mcp-client",
+          "enabled": true,
+          "clientAuthenticatorType": "client-spiffe-jwt",
+          "directAccessGrantsEnabled": true,
+          "standardFlowEnabled": true,
+          "serviceAccountsEnabled": true,
+          "publicClient": false,
+          "redirectUris": ["*"],
+          "webOrigins": ["*"],
+          "protocol": "openid-connect",
+          "attributes": {
+            "issuer": "https://oidc-discovery.example.org",
+            "use.jwks.url": "true",
+            "jwks.url": "https://spire-spiffe-oidc-discovery-provider.spire-system.svc.cluster.local/keys",
+            "spiffe.svid.issuer": "https://oidc-discovery.example.org",
+            "spiffe.svid.jwks.url": "https://spire-spiffe-oidc-discovery-provider.spire-system.svc.cluster.local/keys"
+          }
+        }
+      ]
+    }
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: keycloak
+  namespace: mcp-demo
+spec:
+  serviceName: keycloak
+  replicas: 1
+  selector:
+    matchLabels:
+      app: keycloak
+  template:
+    metadata:
+      labels:
+        app: keycloak
+    spec:
+      containers:
+        - name: keycloak
+          image: keycloak-spiffe:latest
+          imagePullPolicy: Never  # Use local image loaded via kind
+          args:
+            - start-dev
+            - --import-realm
+            - --health-enabled=true
+          ports:
+            - containerPort: 8080
+              name: http
+          env:
+            - name: KC_DB
+              value: postgres
+            - name: KC_DB_URL
+              value: jdbc:postgresql://postgres.mcp-demo.svc.cluster.local:5432/keycloak
+            - name: KC_DB_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-secret
+                  key: POSTGRES_USER
+            - name: KC_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-secret
+                  key: POSTGRES_PASSWORD
+            - name: KC_HOSTNAME_STRICT
+              value: "false"
+            - name: KC_HTTP_ENABLED
+              value: "true"
+            - name: KC_HTTP_PORT
+              value: "8080"
+            - name: KEYCLOAK_ADMIN
+              value: admin
+            - name: KEYCLOAK_ADMIN_PASSWORD
+              value: admin
+          volumeMounts:
+            - name: realm-config
+              mountPath: /opt/keycloak/data/import
+              readOnly: true
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: 9000
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          resources:
+            requests:
+              memory: 512Mi
+              cpu: 500m
+            limits:
+              memory: 1Gi
+              cpu: 1000m
+      volumes:
+        - name: realm-config
+          configMap:
+            name: keycloak-realm-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: keycloak
+  namespace: mcp-demo
+spec:
+  type: NodePort
+  selector:
+    app: keycloak
+  ports:
+    - port: 8080
+      targetPort: 8080
+      nodePort: 30080
+      name: http

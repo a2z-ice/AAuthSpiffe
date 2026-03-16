@@ -1,0 +1,40 @@
+# ============================================================
+# Stage 1: Build SPIFFE SVID Client Authenticator SPI (Java)
+# ============================================================
+FROM maven:3.9-eclipse-temurin-17 AS build-svid-auth
+
+WORKDIR /build
+RUN git clone https://github.com/christian-posta/spiffe-svid-client-authenticator.git .
+RUN mvn clean package -DskipTests
+
+# ============================================================
+# Stage 2: Build SPIFFE DCR Keycloak SPI (Java)
+# ============================================================
+FROM maven:3.9-eclipse-temurin-17 AS build-dcr
+
+WORKDIR /build
+RUN git clone https://github.com/christian-posta/spiffe-dcr-keycloak.git .
+RUN mvn clean package -DskipTests
+
+# ============================================================
+# Stage 3: Build SPIRE Software Statements Plugin (Go)
+# ============================================================
+FROM golang:1.22 AS build-spire-plugin
+
+WORKDIR /build
+RUN git clone https://github.com/christian-posta/spire-software-statements.git .
+RUN go mod tidy && make build-host
+
+# ============================================================
+# Stage 4: Custom Keycloak Image with SPIFFE SPIs
+# ============================================================
+FROM quay.io/keycloak/keycloak:26.2.5
+
+# Copy SPI JARs into Keycloak providers directory
+COPY --from=build-svid-auth /build/target/spiffe-svid-client-authenticator-*.jar /opt/keycloak/providers/
+COPY --from=build-dcr /build/target/spiffe-dcr-spi-*.jar /opt/keycloak/providers/
+
+# Build Keycloak with custom providers
+RUN /opt/keycloak/bin/kc.sh build
+
+ENTRYPOINT ["/opt/keycloak/bin/kc.sh"]

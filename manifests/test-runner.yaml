@@ -1,0 +1,66 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: test-runner
+  namespace: mcp-demo
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: test-runner-view
+subjects:
+  - kind: ServiceAccount
+    name: test-runner
+    namespace: mcp-demo
+roleRef:
+  kind: ClusterRole
+  name: cluster-admin
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: test-runner
+  namespace: mcp-demo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: test-runner
+  template:
+    metadata:
+      labels:
+        app: test-runner
+    spec:
+      serviceAccountName: test-runner
+      containers:
+        - name: test-runner
+          image: python:3.12-slim
+          command: ["sleep", "infinity"]
+          env:
+            - name: SPIFFE_ENDPOINT_SOCKET
+              value: "unix:///spiffe-workload-api/spire-agent.sock"
+            - name: KEYCLOAK_URL
+              value: "http://keycloak.mcp-demo.svc.cluster.local:8080"
+            - name: KEYCLOAK_REALM
+              value: "mcp-demo"
+            - name: OIDC_DISCOVERY_URL
+              value: "https://spire-spiffe-oidc-discovery-provider.spire-system.svc.cluster.local"
+            - name: SPIRE_SERVER_URL
+              value: "spire-server.spire-system.svc.cluster.local"
+            - name: TEST_TIMEOUT
+              value: "30"
+          volumeMounts:
+            - name: spiffe-workload-api
+              mountPath: /spiffe-workload-api
+              readOnly: true
+            - name: test-scripts
+              mountPath: /tests
+      volumes:
+        - name: spiffe-workload-api
+          csi:
+            driver: "csi.spiffe.io"
+            readOnly: true
+        - name: test-scripts
+          configMap:
+            name: e2e-tests

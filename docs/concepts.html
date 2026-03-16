@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Concepts &amp; Background &mdash; SPIFFE + MCP OAuth</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-okaidia.min.css">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<nav class="nav">
+  <div class="nav-inner">
+    <span class="nav-brand">SPIFFE + MCP OAuth</span>
+    <button class="hamburger" onclick="document.querySelector('.nav-links').classList.toggle('open')" aria-label="Menu">&#9776;</button>
+    <div class="nav-links">
+      <a href="index.html">Home</a>
+      <a href="concepts.html" class="active">Concepts</a>
+      <a href="architecture.html">Architecture</a>
+      <a href="deployment.html">Deployment</a>
+      <a href="auth-flows.html">Auth Flows</a>
+      <a href="troubleshooting.html">Troubleshooting</a>
+      <a href="testing.html">Testing</a>
+      <a href="product-manual.html">Product Manual</a>
+    </div>
+  </div>
+</nav>
+
+<main class="container">
+  <div class="breadcrumb"><a href="index.html">Home</a> &raquo; Concepts &amp; Background</div>
+
+  <h1>Concepts &amp; Background</h1>
+  <p>This page explains every technology used in the project from scratch. No prior knowledge assumed.</p>
+
+  <!-- SPIFFE -->
+  <h2>What is SPIFFE?</h2>
+  <p><strong>SPIFFE</strong> (Secure Production Identity Framework For Everyone) is an open standard that defines how software services identify themselves to each other. Think of it as an "identity card" system for applications.</p>
+  <p>Instead of hard-coding passwords or API keys, SPIFFE gives each workload a cryptographic identity called a <strong>SPIFFE ID</strong> &mdash; a URI like:</p>
+  <pre><code class="language-bash">spiffe://example.org/ns/mcp-demo/sa/mcp-client</code></pre>
+
+  <div class="callout callout-info">
+    <strong>Why it matters:</strong> Traditional client_secret-based authentication requires storing, rotating, and distributing secrets. SPIFFE eliminates this by tying identity to the workload's runtime environment &mdash; if the pod is running with the correct service account on an attested node, it automatically gets its identity.
+  </div>
+
+  <h3>SPIFFE ID Format</h3>
+  <table>
+    <thead><tr><th>Part</th><th>Example</th><th>Meaning</th></tr></thead>
+    <tbody>
+      <tr><td><code>spiffe://</code></td><td>scheme</td><td>Always starts with this</td></tr>
+      <tr><td><code>example.org</code></td><td>trust domain</td><td>The root of trust &mdash; who controls identity issuance</td></tr>
+      <tr><td><code>/ns/mcp-demo</code></td><td>path segment</td><td>Kubernetes namespace</td></tr>
+      <tr><td><code>/sa/mcp-client</code></td><td>path segment</td><td>Kubernetes service account</td></tr>
+    </tbody>
+  </table>
+
+  <!-- SPIRE -->
+  <h2>What is SPIRE?</h2>
+  <p><strong>SPIRE</strong> (SPIFFE Runtime Environment) is the reference implementation of SPIFFE. It consists of two main components:</p>
+
+  <div class="card-grid">
+    <div class="card">
+      <h3>SPIRE Server</h3>
+      <p>The central authority. Maintains a registry of which workloads should get which identities. Signs SVIDs using its Certificate Authority (CA). Runs as a StatefulSet in Kubernetes.</p>
+    </div>
+    <div class="card">
+      <h3>SPIRE Agent</h3>
+      <p>Runs on every node (DaemonSet). Performs <strong>workload attestation</strong> &mdash; verifies that a pod is who it claims to be by checking its Kubernetes metadata (namespace, service account, labels). Delivers SVIDs to pods via the <strong>Workload API</strong> socket.</p>
+    </div>
+  </div>
+
+  <h3>How SPIRE Issues Identities</h3>
+  <ol>
+    <li>Pod starts with a volume mount for the Workload API socket (via SPIFFE CSI Driver)</li>
+    <li>Application calls the Workload API: "Give me a JWT SVID for audience X"</li>
+    <li>SPIRE Agent verifies the calling process matches a registered entry (namespace + service account + labels)</li>
+    <li>Agent requests a signed SVID from SPIRE Server</li>
+    <li>Server signs a JWT with the workload's SPIFFE ID and returns it</li>
+    <li>Application receives a short-lived JWT (5 min TTL) to use as a credential</li>
+  </ol>
+
+  <!-- SVID -->
+  <h2>What is an SVID?</h2>
+  <p>An <strong>SVID</strong> (SPIFFE Verifiable Identity Document) is the cryptographic proof of a workload's identity. There are two types:</p>
+
+  <table>
+    <thead><tr><th>Type</th><th>Format</th><th>Used In This Project</th></tr></thead>
+    <tbody>
+      <tr><td><strong>JWT SVID</strong></td><td>JSON Web Token (signed JWT)</td><td>Yes &mdash; used as <code>client_assertion</code> for OAuth</td></tr>
+      <tr><td><strong>X.509 SVID</strong></td><td>X.509 certificate with SPIFFE ID in SAN</td><td>No (not needed for this demo)</td></tr>
+    </tbody>
+  </table>
+
+  <h3>Anatomy of a JWT SVID</h3>
+  <pre><code class="language-json">{
+  "header": {
+    "alg": "RS256",
+    "kid": "abc123...",
+    "typ": "JWT"
+  },
+  "payload": {
+    "sub": "spiffe://example.org/ns/mcp-demo/sa/mcp-client",
+    "aud": ["http://keycloak.mcp-demo.svc.cluster.local:8080/realms/mcp-demo"],
+    "iss": "https://oidc-discovery.example.org",
+    "exp": 1710600300,
+    "iat": 1710600000
+  }
+}</code></pre>
+
+  <!-- Keycloak -->
+  <h2>What is Keycloak?</h2>
+  <p><strong>Keycloak</strong> is an open-source Identity and Access Management (IAM) server. In this project, it serves as the <strong>OAuth2 Authorization Server</strong> &mdash; the gatekeeper that decides whether a client should receive an access token.</p>
+
+  <h3>Keycloak Concepts Used</h3>
+  <table>
+    <thead><tr><th>Concept</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Realm</strong></td><td>An isolated authentication domain. Ours is called <code>mcp-demo</code>.</td></tr>
+      <tr><td><strong>Client</strong></td><td>An application registered in the realm. Our client ID is the SPIFFE ID itself.</td></tr>
+      <tr><td><strong>SPI</strong> (Service Provider Interface)</td><td>Keycloak's plugin system. We add two custom SPIs for SPIFFE support.</td></tr>
+      <tr><td><strong>Authentication Flow</strong></td><td>A sequence of steps Keycloak follows to verify a client. We add a "spiffe-clients" flow.</td></tr>
+      <tr><td><strong>Client Authenticator</strong></td><td>The mechanism a client uses to prove its identity. Normally <code>client_secret</code>; we replace it with <code>client-spiffe-jwt</code>.</td></tr>
+    </tbody>
+  </table>
+
+  <h3>Custom SPIs</h3>
+  <div class="card-grid">
+    <div class="card">
+      <h3>SVID Client Authenticator SPI</h3>
+      <p>Intercepts token requests where <code>client_assertion_type</code> is <code>urn:ietf:params:oauth:client-assertion-type:jwt-spiffe</code>. Fetches JWKS from SPIRE OIDC Discovery, validates the JWT SVID signature, checks issuer/audience/expiry, and maps the SPIFFE ID to a registered client.</p>
+    </div>
+    <div class="card">
+      <h3>SPIFFE DCR SPI</h3>
+      <p>Provides a Dynamic Client Registration endpoint at <code>/clients-registrations/spiffe-dcr/register</code>. Accepts a JWT SVID as a "software statement", verifies it, and auto-registers an OAuth client with the SPIFFE ID as the client ID.</p>
+    </div>
+  </div>
+
+  <!-- MCP -->
+  <h2>What is MCP?</h2>
+  <p><strong>MCP</strong> (Model Context Protocol) is an open protocol that defines how AI agents (like Claude) interact with external tools and data sources. Key authorization requirements from the MCP spec:</p>
+  <ul>
+    <li>MCP clients <strong>SHOULD</strong> use Dynamic Client Registration (RFC 7591)</li>
+    <li>MCP servers <strong>MUST</strong> implement Protected Resource Metadata (RFC 9728)</li>
+    <li>Clients <strong>MUST</strong> implement Resource Indicators (RFC 8707)</li>
+  </ul>
+  <div class="callout callout-success">
+    <strong>Our innovation:</strong> By using SPIFFE, we replace <em>anonymous</em> DCR with <em>cryptographically-verified identity-based</em> registration. The MCP client doesn't just register &mdash; it proves who it is.
+  </div>
+
+  <!-- OAuth / OIDC -->
+  <h2>OAuth 2.0 &amp; OIDC Basics</h2>
+  <p><strong>OAuth 2.0</strong> is the authorization framework. <strong>OpenID Connect (OIDC)</strong> is an identity layer built on top. Here's how they apply:</p>
+
+  <table>
+    <thead><tr><th>Concept</th><th>Role in This System</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Authorization Server</strong></td><td>Keycloak &mdash; issues access tokens</td></tr>
+      <tr><td><strong>Client Credentials Grant</strong></td><td>The OAuth flow used &mdash; machine-to-machine, no user involved</td></tr>
+      <tr><td><strong>client_assertion</strong></td><td>The JWT SVID replaces client_secret</td></tr>
+      <tr><td><strong>client_assertion_type</strong></td><td><code>urn:ietf:params:oauth:client-assertion-type:jwt-spiffe</code></td></tr>
+      <tr><td><strong>Access Token</strong></td><td>The result &mdash; a Bearer JWT that authorizes API calls</td></tr>
+      <tr><td><strong>JWKS</strong> (JSON Web Key Set)</td><td>Public keys published at a URL, used to verify JWT signatures</td></tr>
+    </tbody>
+  </table>
+
+  <!-- OIDC Discovery -->
+  <h2>OIDC Discovery &amp; JWKS</h2>
+  <p>The SPIRE OIDC Discovery Provider is a bridge between SPIRE and standard OIDC-aware systems (like Keycloak):</p>
+  <ul>
+    <li>Serves <code>/.well-known/openid-configuration</code> &mdash; tells clients where to find keys</li>
+    <li>Serves <code>/keys</code> (JWKS endpoint) &mdash; contains the public keys SPIRE uses to sign SVIDs</li>
+    <li>Keycloak's SPIFFE SPI fetches from this JWKS to verify incoming JWT SVIDs</li>
+  </ul>
+
+  <!-- Workload API -->
+  <h2>Workload API &amp; CSI Driver</h2>
+  <p>The <strong>Workload API</strong> is a Unix domain socket that SPIRE Agent exposes to pods. The <strong>SPIFFE CSI Driver</strong> automatically mounts this socket into pods that request it:</p>
+  <pre><code class="language-yaml">volumes:
+  - name: spiffe-workload-api
+    csi:
+      driver: "csi.spiffe.io"
+      readOnly: true</code></pre>
+  <p>Inside the pod, the socket is available at <code>/spiffe-workload-api/spire-agent.sock</code>.</p>
+
+  <!-- Glossary -->
+  <h2>Glossary</h2>
+  <table>
+    <thead><tr><th>Term</th><th>Definition</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Attestation</strong></td><td>The process of verifying a workload's identity based on runtime evidence (node identity, pod metadata)</td></tr>
+      <tr><td><strong>Bearer Token</strong></td><td>A credential that grants access to whoever "bears" (holds) it</td></tr>
+      <tr><td><strong>CA (Certificate Authority)</strong></td><td>The entity that signs certificates. SPIRE Server is the CA for JWT SVIDs.</td></tr>
+      <tr><td><strong>ClusterSPIFFEID</strong></td><td>A Kubernetes CRD that tells SPIRE to automatically register entries for matching pods</td></tr>
+      <tr><td><strong>CredentialComposer</strong></td><td>A SPIRE Server plugin that enriches SVIDs with extra claims before signing</td></tr>
+      <tr><td><strong>CSI Driver</strong></td><td>Container Storage Interface driver that mounts the Workload API socket into pods</td></tr>
+      <tr><td><strong>DCR</strong></td><td>Dynamic Client Registration &mdash; automatic OAuth client creation (RFC 7591)</td></tr>
+      <tr><td><strong>DaemonSet</strong></td><td>Kubernetes resource that runs one pod per node</td></tr>
+      <tr><td><strong>Helm</strong></td><td>Kubernetes package manager used to install SPIRE</td></tr>
+      <tr><td><strong>IETF Draft</strong></td><td>An Internet Engineering Task Force standards-track document</td></tr>
+      <tr><td><strong>JWT</strong></td><td>JSON Web Token &mdash; a compact, URL-safe, signed data format</td></tr>
+      <tr><td><strong>JWKS</strong></td><td>JSON Web Key Set &mdash; a set of public keys for verifying JWT signatures</td></tr>
+      <tr><td><strong>Kind</strong></td><td>Kubernetes-in-Docker &mdash; runs a K8s cluster inside Docker containers</td></tr>
+      <tr><td><strong>MCP</strong></td><td>Model Context Protocol &mdash; defines how AI agents access tools and data</td></tr>
+      <tr><td><strong>NodePort</strong></td><td>A Kubernetes service type that exposes a port on every node</td></tr>
+      <tr><td><strong>OIDC</strong></td><td>OpenID Connect &mdash; identity layer on top of OAuth 2.0</td></tr>
+      <tr><td><strong>Realm</strong></td><td>An isolated authentication domain in Keycloak</td></tr>
+      <tr><td><strong>SPI</strong></td><td>Service Provider Interface &mdash; Keycloak's extension/plugin mechanism</td></tr>
+      <tr><td><strong>SPIFFE</strong></td><td>Secure Production Identity Framework For Everyone</td></tr>
+      <tr><td><strong>SPIRE</strong></td><td>SPIFFE Runtime Environment &mdash; the reference implementation</td></tr>
+      <tr><td><strong>SVID</strong></td><td>SPIFFE Verifiable Identity Document &mdash; the cryptographic proof of identity</td></tr>
+      <tr><td><strong>StatefulSet</strong></td><td>Kubernetes resource for stateful applications (SPIRE Server, Keycloak)</td></tr>
+      <tr><td><strong>Trust Domain</strong></td><td>The root of trust in SPIFFE (<code>example.org</code> in this project)</td></tr>
+      <tr><td><strong>Workload API</strong></td><td>Unix socket API through which pods request SVIDs from SPIRE Agent</td></tr>
+    </tbody>
+  </table>
+
+</main>
+
+<footer class="footer">
+  <p>SPIFFE + MCP OAuth Authentication System &mdash; <a href="index.html">Home</a></p>
+</footer>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-bash.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-yaml.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-json.min.js"></script>
+</body>
+</html>

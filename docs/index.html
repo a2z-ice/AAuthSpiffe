@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SPIFFE + MCP OAuth Authentication System</title>
+  <!-- LinkedIn / Open Graph -->
+  <meta property="og:title" content="SPIFFE + MCP OAuth Authentication System">
+  <meta property="og:description" content="Zero-secret authentication for AI agents using SPIFFE/SPIRE, Keycloak, and MCP OAuth. Cryptographically verified workload identity replaces static client secrets.">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="SPIFFE MCP OAuth Demo">
+  <!-- Prism.js for code highlighting -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-okaidia.min.css">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<!-- Navigation -->
+<nav class="nav">
+  <div class="nav-inner">
+    <span class="nav-brand">SPIFFE + MCP OAuth</span>
+    <button class="hamburger" onclick="document.querySelector('.nav-links').classList.toggle('open')" aria-label="Menu">&#9776;</button>
+    <div class="nav-links">
+      <a href="index.html" class="active">Home</a>
+      <a href="concepts.html">Concepts</a>
+      <a href="architecture.html">Architecture</a>
+      <a href="deployment.html">Deployment</a>
+      <a href="auth-flows.html">Auth Flows</a>
+      <a href="troubleshooting.html">Troubleshooting</a>
+      <a href="testing.html">Testing</a>
+      <a href="product-manual.html">Product Manual</a>
+    </div>
+  </div>
+</nav>
+
+<!-- Hero Banner -->
+<header class="hero">
+  <div class="hero-inner">
+    <h1>SPIFFE + MCP OAuth</h1>
+    <p class="tagline">Zero-secret authentication for AI agents. Cryptographically verified workload identity replaces static client secrets &mdash; powered by SPIFFE/SPIRE, Keycloak, and the MCP protocol.</p>
+    <div class="hero-badges">
+      <div class="badge">
+        <span class="num">5</span>
+        <span class="label">Deployment Phases</span>
+      </div>
+      <div class="badge">
+        <span class="num">80</span>
+        <span class="label">Automated Tests</span>
+      </div>
+      <div class="badge">
+        <span class="num">0</span>
+        <span class="label">Static Secrets</span>
+      </div>
+    </div>
+  </div>
+</header>
+
+<main class="container">
+
+  <!-- Project Summary -->
+  <section>
+    <h2>What This Project Does</h2>
+    <p>This system demonstrates how <strong>AI agents (MCP clients)</strong> can authenticate to an OAuth Authorization Server (<strong>Keycloak</strong>) using cryptographically verifiable <strong>SPIFFE identities</strong> instead of long-lived client secrets. It follows the IETF draft <code>draft-ietf-oauth-spiffe-client-auth</code> and runs entirely inside a <strong>Kind (Kubernetes-in-Docker)</strong> cluster on macOS.</p>
+
+    <div class="callout callout-success">
+      <strong>Key Innovation</strong>
+      Instead of storing and rotating client_secret values, workloads prove their identity with short-lived JWT SVIDs (5-minute TTL) that are automatically issued, cryptographically signed, and verified through a distributed trust chain.
+    </div>
+  </section>
+
+  <!-- Architecture Overview Diagram -->
+  <section>
+    <h2>Architecture Overview</h2>
+
+    <div class="diagram">
+      <div class="diagram-title">System Overview &mdash; Kind Cluster</div>
+      <div class="cluster-box" data-label="Kind Cluster: spiffe-mcp-demo">
+        <div class="ns-row">
+          <div class="ns-box" data-ns="spire-system">
+            <div class="component server"><span class="component-icon">&#9881;</span> SPIRE Server (StatefulSet)</div>
+            <div class="component agent"><span class="component-icon">&#128274;</span> SPIRE Agent (DaemonSet)</div>
+            <div class="component"><span class="component-icon">&#128273;</span> OIDC Discovery Provider</div>
+            <div class="component"><span class="component-icon">&#128190;</span> SPIFFE CSI Driver</div>
+            <div class="component"><span class="component-icon">&#127760;</span> Controller Manager</div>
+          </div>
+          <div class="ns-box" data-ns="mcp-demo">
+            <div class="component kc"><span class="component-icon">&#128272;</span> Keycloak + SPIFFE SPIs</div>
+            <div class="component db"><span class="component-icon">&#128451;</span> PostgreSQL</div>
+            <div class="component"><span class="component-icon">&#129302;</span> MCP Client (AI Agent)</div>
+            <div class="component"><span class="component-icon">&#9881;</span> MCP Server (Resource)</div>
+            <div class="component"><span class="component-icon">&#128202;</span> Test Runner</div>
+          </div>
+        </div>
+        <div class="arrow-row" style="margin-top:1rem;">
+          <span>Agent &rarr; Server (attestation)</span>
+          <span class="arrow">|</span>
+          <span>Agent &rarr; Pod (SVID via CSI)</span>
+          <span class="arrow">|</span>
+          <span>Pod &rarr; Keycloak (token exchange)</span>
+          <span class="arrow">|</span>
+          <span>Keycloak &rarr; OIDC (JWKS fetch)</span>
+        </div>
+      </div>
+      <div class="arrow-row" style="margin-top:1rem;">
+        <strong>Host (macOS)</strong> <span class="arrow">&rarr;</span> <code>:30080</code> Keycloak <span class="arrow">|</span> <code>:30443</code> OIDC Discovery
+      </div>
+    </div>
+  </section>
+
+  <!-- Trust Chain -->
+  <section>
+    <h2>Trust Chain</h2>
+    <div class="diagram">
+      <div class="diagram-title">Cryptographic Verification Pipeline</div>
+      <div class="pipeline">
+        <div>
+          <div class="pipeline-step">SPIRE CA</div>
+          <div class="pipeline-label">Root of trust</div>
+        </div>
+        <span class="pipeline-arrow">&rarr;</span>
+        <div>
+          <div class="pipeline-step teal">JWT SVID</div>
+          <div class="pipeline-label">Signs</div>
+        </div>
+        <span class="pipeline-arrow">&rarr;</span>
+        <div>
+          <div class="pipeline-step light">OIDC JWKS</div>
+          <div class="pipeline-label">Published via</div>
+        </div>
+        <span class="pipeline-arrow">&rarr;</span>
+        <div>
+          <div class="pipeline-step">Keycloak SPI</div>
+          <div class="pipeline-label">Fetched by</div>
+        </div>
+        <span class="pipeline-arrow">&rarr;</span>
+        <div>
+          <div class="pipeline-step teal">Access Token</div>
+          <div class="pipeline-label">Verified &amp; issued</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Quick Start -->
+  <section>
+    <h2>Quick Start</h2>
+    <div class="callout callout-info">
+      <strong>Prerequisites:</strong> Docker Desktop, kind, kubectl, helm, jq installed on macOS.
+    </div>
+    <pre><code class="language-bash"># Verify prerequisites
+docker version && kind version && kubectl version --client && helm version && jq --version
+
+# Deploy everything (takes ~10 minutes)
+./deploy-all.sh
+
+# Run the SPIFFE authentication demo
+kubectl -n mcp-demo exec -it deploy/mcp-client -- bash /scripts/test-spiffe-auth.sh
+
+# Run the full test suite (80 tests)
+./scripts/run-all-tests.sh
+
+# Teardown
+./teardown.sh</code></pre>
+  </section>
+
+  <!-- Documentation Pages Grid -->
+  <section>
+    <h2>Documentation</h2>
+    <div class="card-grid">
+      <div class="card">
+        <h3><a href="concepts.html">Concepts &amp; Background</a></h3>
+        <p>Learn SPIFFE, SPIRE, SVID, Keycloak, MCP, OIDC, and JWKS from scratch. Includes a glossary of 20+ terms for newcomers.</p>
+      </div>
+      <div class="card">
+        <h3><a href="architecture.html">Architecture Deep Dive</a></h3>
+        <p>11 components explained with CSS diagrams, namespace layout, trust chain flow, networking model, and custom SPI details.</p>
+      </div>
+      <div class="card">
+        <h3><a href="deployment.html">Deployment Guide</a></h3>
+        <p>5-phase step-by-step deployment with annotated configs, exact commands, validation gates, and per-phase troubleshooting.</p>
+      </div>
+      <div class="card">
+        <h3><a href="auth-flows.html">Authentication Flows</a></h3>
+        <p>Flow B (Token Exchange) and Flow A (DCR) walkthroughs with Python code, curl examples, and CSS sequence diagrams.</p>
+      </div>
+      <div class="card">
+        <h3><a href="troubleshooting.html">Troubleshooting</a></h3>
+        <p>12 implementation issues documented as before/after cards with symptom, root cause, fix, and affected files.</p>
+      </div>
+      <div class="card">
+        <h3><a href="testing.html">Test Suite &amp; Manual Testing</a></h3>
+        <p>All 80 tests organized by layer (L1-L5). Manual positive and negative testing guides with curl commands.</p>
+      </div>
+      <div class="card">
+        <h3><a href="product-manual.html">Product Manual</a></h3>
+        <p>Non-technical guide: what the system does, one-command deploy, verifying it works, admin console access, and FAQ.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- Tech Stack -->
+  <section>
+    <h2>Technology Stack</h2>
+    <table>
+      <thead>
+        <tr><th>Component</th><th>Technology</th><th>Purpose</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>Identity Provider</td><td>SPIRE 1.x (Helm hardened charts)</td><td>Issues short-lived JWT SVIDs</td></tr>
+        <tr><td>Authorization Server</td><td>Keycloak 26.2.5</td><td>OAuth2/OIDC with custom SPIFFE SPIs</td></tr>
+        <tr><td>Client Auth SPI</td><td>Java 17 / Maven</td><td>Validates JWT SVIDs as client assertions</td></tr>
+        <tr><td>DCR SPI</td><td>Java 17 / Maven</td><td>Dynamic Client Registration via SPIFFE</td></tr>
+        <tr><td>SPIRE Plugin</td><td>Go 1.22</td><td>Enriches SVIDs with DCR claims</td></tr>
+        <tr><td>Cluster</td><td>Kind (K8s-in-Docker)</td><td>Local Kubernetes environment</td></tr>
+        <tr><td>Database</td><td>PostgreSQL 16 Alpine</td><td>Keycloak backend store</td></tr>
+        <tr><td>MCP Workloads</td><td>Python 3.12</td><td>Demo AI agent client &amp; server</td></tr>
+        <tr><td>Test Suite</td><td>pytest (80 tests, L1-L5)</td><td>Infrastructure through chaos testing</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- References -->
+  <section>
+    <h2>References</h2>
+    <ul>
+      <li>IETF Draft: <code>draft-ietf-oauth-spiffe-client-auth-01</code></li>
+      <li>Christian Posta &mdash; Authenticating MCP OAuth Clients With SPIFFE and SPIRE</li>
+      <li>Christian Posta &mdash; Implementing MCP DCR With SPIFFE and Keycloak</li>
+      <li>MCP Authorization Specification (2025-06-18)</li>
+      <li>SPIRE Helm Charts (Hardened) &mdash; ArtifactHub</li>
+      <li>Keycloak Issue #41907: SPIFFE/SPIRE Client Auth</li>
+    </ul>
+  </section>
+
+</main>
+
+<footer class="footer">
+  <p>SPIFFE + MCP OAuth Authentication System &mdash; Built with SPIRE, Keycloak, and Kind on macOS</p>
+  <p style="margin-top:.5rem;">Based on <a href="https://datatracker.ietf.org/doc/draft-ietf-oauth-spiffe-client-auth/">IETF draft-ietf-oauth-spiffe-client-auth</a></p>
+</footer>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-bash.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-yaml.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-json.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-go.min.js"></script>
+</body>
+</html>

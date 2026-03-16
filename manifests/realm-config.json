@@ -1,0 +1,41 @@
+{
+  "realm": "mcp-demo",
+  "enabled": true,
+  "sslRequired": "none",
+  "registrationAllowed": false,
+  "attributes": {
+    "spiffe.trust.domain": "example.org",
+    "spiffe.jwks.url": "http://spiffe-oidc-discovery-provider.spire-system.svc.cluster.local/keys"
+  },
+  "roles": {
+    "realm": [
+      { "name": "mcp-client", "description": "MCP Client Role" },
+      { "name": "mcp-server", "description": "MCP Server Role" }
+    ]
+  },
+  "users": [
+    {
+      "username": "demo-user",
+      "enabled": true,
+      "credentials": [{ "type": "password", "value": "demo-password", "temporary": false }],
+      "realmRoles": ["mcp-client"]
+    }
+  ],
+  "clients": [
+    {
+      "clientId": "spiffe://example.org/ns/mcp-demo/sa/mcp-client",
+      "enabled": true,
+      "clientAuthenticatorType": "client-spiffe-jwt",
+      "directAccessGrantsEnabled": true,
+      "standardFlowEnabled": true,
+      "publicClient": false,
+      "redirectUris": ["http://localhost:8888/callback", "http://localhost:30080/callback", "http://mcp-client.mcp-demo.svc.cluster.local/callback"],
+      "webOrigins": ["*"],
+      "protocol": "openid-connect",
+      "attributes": {
+        "spiffe.svid.issuer": "https://oidc-discovery.example.org",
+        "spiffe.svid.jwks.url": "http://spiffe-oidc-discovery-provider.spire-system.svc.cluster.local/keys"
+      }
+    }
+  ]
+}

@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Test Suite &amp; Manual Testing &mdash; SPIFFE + MCP OAuth</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-okaidia.min.css">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<nav class="nav">
+  <div class="nav-inner">
+    <span class="nav-brand">SPIFFE + MCP OAuth</span>
+    <button class="hamburger" onclick="document.querySelector('.nav-links').classList.toggle('open')" aria-label="Menu">&#9776;</button>
+    <div class="nav-links">
+      <a href="index.html">Home</a>
+      <a href="concepts.html">Concepts</a>
+      <a href="architecture.html">Architecture</a>
+      <a href="deployment.html">Deployment</a>
+      <a href="auth-flows.html">Auth Flows</a>
+      <a href="troubleshooting.html">Troubleshooting</a>
+      <a href="testing.html" class="active">Testing</a>
+      <a href="product-manual.html">Product Manual</a>
+    </div>
+  </div>
+</nav>
+
+<main class="container">
+  <div class="breadcrumb"><a href="index.html">Home</a> &raquo; Test Suite &amp; Manual Testing Guide</div>
+
+  <h1>Test Suite &amp; Manual Testing Guide</h1>
+  <p>80 automated tests across 5 layers, plus manual positive and negative testing guides.</p>
+
+  <!-- Test Pyramid -->
+  <h2>Test Layer Pyramid</h2>
+  <div class="diagram">
+    <div class="diagram-title">Test Coverage by Layer (80 total)</div>
+    <div class="pyramid">
+      <div class="pyramid-layer l5">L5: Resilience &amp; Security &mdash; 13 tests</div>
+      <div class="pyramid-layer l4">L4: End-to-End Flows &mdash; 9 tests</div>
+      <div class="pyramid-layer l3">L3: Integration (JWT + Auth Flows) &mdash; 25 tests</div>
+      <div class="pyramid-layer l2">L2: Components (SPIRE + Keycloak) &mdash; 24 tests</div>
+      <div class="pyramid-layer l1">L1: Infrastructure (Kind + DNS + CSI) &mdash; 9 tests</div>
+    </div>
+  </div>
+
+  <!-- Running Tests -->
+  <h2>Running the Test Suite</h2>
+  <pre><code class="language-bash"># Run all 80 tests
+./scripts/run-all-tests.sh
+
+# Run a specific layer
+kubectl -n mcp-demo exec deploy/test-runner -- \
+  python -m pytest tests/test_01_infrastructure.py -v
+
+# Run a specific test
+kubectl -n mcp-demo exec deploy/test-runner -- \
+  python -m pytest tests/test_05_auth_flows.py::TestClientCredentialsWithSPIFFE::test_token_exchange_succeeds -v</code></pre>
+
+  <!-- L1 Tests -->
+  <h2>L1: Infrastructure Tests</h2>
+  <p><strong>File:</strong> <code>tests/test_01_infrastructure.py</code></p>
+  <table>
+    <thead><tr><th>#</th><th>Class</th><th>Test</th><th>Validates</th></tr></thead>
+    <tbody>
+      <tr><td>1</td><td>TestKindCluster</td><td>test_cluster_nodes_ready</td><td>All Kind nodes in Ready state</td></tr>
+      <tr><td>2</td><td>TestKindCluster</td><td>test_minimum_two_nodes</td><td>At least 2 nodes (control-plane + worker)</td></tr>
+      <tr><td>3</td><td>TestKindCluster</td><td>test_default_storage_class_exists</td><td>Default StorageClass for PVC provisioning</td></tr>
+      <tr><td>4</td><td>TestNetworking</td><td>test_coredns_running</td><td>CoreDNS pods running for service discovery</td></tr>
+      <tr><td>5</td><td>TestNetworking</td><td>test_cross_namespace_dns_resolution</td><td>Keycloak resolvable from test namespace</td></tr>
+      <tr><td>6</td><td>TestNetworking</td><td>test_spire_system_dns_resolution</td><td>SPIRE services resolvable</td></tr>
+      <tr><td>7</td><td>TestNetworking</td><td>test_keycloak_nodeport_accessible</td><td>Keycloak service is NodePort type</td></tr>
+      <tr><td>8</td><td>TestCSIDriver</td><td>test_csi_driver_registered</td><td>csi.spiffe.io driver registered in cluster</td></tr>
+      <tr><td>9</td><td>TestCSIDriver</td><td>test_workload_api_socket_mounted</td><td>Socket exists at expected path</td></tr>
+    </tbody>
+  </table>
+
+  <!-- L2 Tests -->
+  <h2>L2: SPIRE Component Tests</h2>
+  <p><strong>File:</strong> <code>tests/test_02_spire_components.py</code></p>
+  <table>
+    <thead><tr><th>#</th><th>Class</th><th>Test</th><th>Validates</th></tr></thead>
+    <tbody>
+      <tr><td>1</td><td>TestSPIREServer</td><td>test_server_pod_running</td><td>Server pod in Running state</td></tr>
+      <tr><td>2</td><td>TestSPIREServer</td><td>test_server_container_ready</td><td>All containers in Server pod ready</td></tr>
+      <tr><td>3</td><td>TestSPIREServer</td><td>test_trust_domain_configured</td><td>Trust domain is example.org</td></tr>
+      <tr><td>4</td><td>TestSPIREAgent</td><td>test_agent_daemonset_running</td><td>Agent DaemonSet has correct replica count</td></tr>
+      <tr><td>5</td><td>TestSPIREAgent</td><td>test_agent_can_issue_svid</td><td>Agent issues JWT SVID via Workload API</td></tr>
+      <tr><td>6</td><td>TestOIDCDiscovery</td><td>test_openid_configuration_endpoint</td><td>/.well-known/openid-configuration returns valid JSON</td></tr>
+      <tr><td>7</td><td>TestOIDCDiscovery</td><td>test_jwks_endpoint_returns_keys</td><td>/keys returns at least one signing key</td></tr>
+      <tr><td>8</td><td>TestOIDCDiscovery</td><td>test_jwks_keys_are_public_only</td><td>No private key fields (d, p, q) exposed</td></tr>
+      <tr><td>9</td><td>TestControllerManager</td><td>test_controller_manager_running</td><td>Controller Manager sidecar is ready</td></tr>
+      <tr><td>10</td><td>TestControllerManager</td><td>test_cluster_spiffe_id_crds_exist</td><td>ClusterSPIFFEID CRDs registered</td></tr>
+      <tr><td>11</td><td>TestControllerManager</td><td>test_mcp_client_spiffe_id_registered</td><td>mcp-client-id entry exists</td></tr>
+    </tbody>
+  </table>
+
+  <h2>L2: Keycloak Component Tests</h2>
+  <p><strong>File:</strong> <code>tests/test_03_keycloak.py</code></p>
+  <table>
+    <thead><tr><th>#</th><th>Class</th><th>Test</th><th>Validates</th></tr></thead>
+    <tbody>
+      <tr><td>1</td><td>TestKeycloakServer</td><td>test_health_endpoint</td><td>Keycloak responds to realm requests</td></tr>
+      <tr><td>2</td><td>TestKeycloakServer</td><td>test_postgres_connection</td><td>Connected to PostgreSQL (not H2)</td></tr>
+      <tr><td>3</td><td>TestKeycloakServer</td><td>test_admin_console_accessible</td><td>Admin console reachable</td></tr>
+      <tr><td>4</td><td>TestRealmConfiguration</td><td>test_realm_exists</td><td>mcp-demo realm exists</td></tr>
+      <tr><td>5</td><td>TestRealmConfiguration</td><td>test_realm_oidc_discovery</td><td>OIDC discovery returns correct issuer</td></tr>
+      <tr><td>6</td><td>TestRealmConfiguration</td><td>test_realm_token_endpoint_supports_client_credentials</td><td>client_credentials grant supported</td></tr>
+      <tr><td>7</td><td>TestRealmConfiguration</td><td>test_demo_user_exists</td><td>demo-user exists in realm</td></tr>
+      <tr><td>8</td><td>TestSPIFFEClientConfig</td><td>test_spiffe_client_exists</td><td>SPIFFE client registered</td></tr>
+      <tr><td>9</td><td>TestSPIFFEClientConfig</td><td>test_spiffe_client_authenticator_type</td><td>Uses client-spiffe-jwt authenticator</td></tr>
+      <tr><td>10</td><td>TestSPIFFEClientConfig</td><td>test_spiffe_client_is_confidential</td><td>Not a public client</td></tr>
+      <tr><td>11</td><td>TestSPIFFEClientConfig</td><td>test_spiffe_client_has_no_client_secret</td><td>No static client_secret needed</td></tr>
+      <tr><td>12</td><td>TestSPIFFESPILoaded</td><td>test_client_authenticator_providers</td><td>client-spiffe-jwt in provider list</td></tr>
+      <tr><td>13</td><td>TestSPIFFESPILoaded</td><td>test_spiffe_auth_flow_exists</td><td>spiffe-clients flow exists</td></tr>
+    </tbody>
+  </table>
+
+  <!-- L3 Tests -->
+  <h2>L3: JWT SVID Integration Tests</h2>
+  <p><strong>File:</strong> <code>tests/test_04_jwt_svid.py</code></p>
+  <table>
+    <thead><tr><th>#</th><th>Class</th><th>Test</th><th>Validates</th></tr></thead>
+    <tbody>
+      <tr><td>1</td><td>TestJWTSVIDStructure</td><td>test_svid_is_valid_jwt</td><td>Decodable JWT format</td></tr>
+      <tr><td>2</td><td>TestJWTSVIDStructure</td><td>test_svid_contains_required_claims</td><td>sub, aud, exp, iat present</td></tr>
+      <tr><td>3</td><td>TestJWTSVIDStructure</td><td>test_svid_subject_is_spiffe_id</td><td>sub starts with spiffe://</td></tr>
+      <tr><td>4</td><td>TestJWTSVIDStructure</td><td>test_svid_audience_matches_request</td><td>aud matches requested audience</td></tr>
+      <tr><td>5</td><td>TestJWTSVIDStructure</td><td>test_svid_not_expired</td><td>exp is in the future</td></tr>
+      <tr><td>6</td><td>TestJWTSVIDStructure</td><td>test_svid_ttl_within_expected_range</td><td>TTL between 30s and 600s</td></tr>
+      <tr><td>7</td><td>TestJWTSVIDStructure</td><td>test_svid_has_three_parts</td><td>header.payload.signature format</td></tr>
+      <tr><td>8</td><td>TestJWTSVIDStructure</td><td>test_svid_header_has_kid</td><td>kid and alg in JWT header</td></tr>
+      <tr><td>9</td><td>TestCryptoVerification</td><td>test_svid_verifiable_via_oidc_jwks</td><td>Signature verifies against OIDC JWKS</td></tr>
+      <tr><td>10</td><td>TestCryptoVerification</td><td>test_tampered_svid_fails_verification</td><td>Tampered JWT rejected</td></tr>
+      <tr><td>11</td><td>TestCryptoVerification</td><td>test_svid_kid_matches_jwks_key</td><td>JWT kid found in JWKS</td></tr>
+      <tr><td>12</td><td>TestSoftwareStatements</td><td>test_svid_contains_jwks_url_claim</td><td>jwks_url claim present (if plugin active)</td></tr>
+      <tr><td>13</td><td>TestSoftwareStatements</td><td>test_svid_contains_client_auth_claim</td><td>client_auth claim = client-spiffe-jwt</td></tr>
+    </tbody>
+  </table>
+
+  <h2>L3: Auth Flow Integration Tests</h2>
+  <p><strong>File:</strong> <code>tests/test_05_auth_flows.py</code></p>
+  <table>
+    <thead><tr><th>#</th><th>Class</th><th>Test</th><th>Validates</th></tr></thead>
+    <tbody>
+      <tr><td>1</td><td>TestClientCredentials</td><td>test_token_exchange_succeeds</td><td>Gets access_token with JWT SVID</td></tr>
+      <tr><td>2</td><td>TestClientCredentials</td><td>test_access_token_is_valid_jwt</td><td>Returned token is valid JWT</td></tr>
+      <tr><td>3</td><td>TestClientCredentials</td><td>test_access_token_has_correct_client_id</td><td>azp contains SPIFFE ID</td></tr>
+      <tr><td>4</td><td>TestClientCredentials</td><td>test_token_has_expiry</td><td>expires_in field present</td></tr>
+      <tr><td>5</td><td>TestNegativeCases</td><td>test_wrong_assertion_type_rejected</td><td>Invalid assertion type returns 400/401</td></tr>
+      <tr><td>6</td><td>TestNegativeCases</td><td>test_garbage_token_rejected</td><td>Random string rejected</td></tr>
+      <tr><td>7</td><td>TestNegativeCases</td><td>test_empty_assertion_rejected</td><td>Empty assertion rejected</td></tr>
+      <tr><td>8</td><td>TestNegativeCases</td><td>test_wrong_audience_rejected</td><td>Wrong audience SVID rejected</td></tr>
+      <tr><td>9</td><td>TestNegativeCases</td><td>test_missing_grant_type_rejected</td><td>Missing grant_type returns error</td></tr>
+      <tr><td>10</td><td>TestNegativeCases</td><td>test_svid_replay_within_ttl_may_work</td><td>Replay detection enforcement</td></tr>
+      <tr><td>11</td><td>TestDCR</td><td>test_dcr_endpoint_exists</td><td>DCR endpoint responds (not 404)</td></tr>
+      <tr><td>12</td><td>TestDCR</td><td>test_dcr_with_valid_software_statement</td><td>Valid software statement registers client</td></tr>
+    </tbody>
+  </table>
+
+  <!-- L4 Tests -->
+  <h2>L4: End-to-End Flow Tests</h2>
+  <p><strong>File:</strong> <code>tests/test_06_e2e_flows.py</code></p>
+  <table>
+    <thead><tr><th>#</th><th>Class</th><th>Test</th><th>Validates</th></tr></thead>
+    <tbody>
+      <tr><td>1</td><td>TestCompleteAuthFlow</td><td>test_full_flow_spire_to_access_token</td><td>Complete SPIRE &rarr; Keycloak &rarr; token chain</td></tr>
+      <tr><td>2</td><td>TestCompleteAuthFlow</td><td>test_access_token_verifiable_by_keycloak_jwks</td><td>Access token verifiable via Keycloak JWKS</td></tr>
+      <tr><td>3</td><td>TestCompleteAuthFlow</td><td>test_access_token_introspection</td><td>Token passes introspection as active</td></tr>
+      <tr><td>4</td><td>TestTokenRefresh</td><td>test_multiple_sequential_token_requests</td><td>3 sequential requests all succeed with unique tokens</td></tr>
+      <tr><td>5</td><td>TestTokenRefresh</td><td>test_fresh_svid_per_request</td><td>Each request uses a valid SVID</td></tr>
+      <tr><td>6</td><td>TestTrustChain</td><td>test_spire_signing_key_in_oidc_jwks</td><td>SVID kid appears in OIDC JWKS</td></tr>
+      <tr><td>7</td><td>TestTrustChain</td><td>test_keycloak_can_reach_oidc_discovery</td><td>OIDC Discovery reachable from cluster</td></tr>
+      <tr><td>8</td><td>TestTrustChain</td><td>test_end_to_end_zero_secrets</td><td>Full flow with no static secrets</td></tr>
+      <tr><td>9</td><td>TestTrustChain</td><td>test_token_metadata_consistency</td><td>SVID sub matches access token azp</td></tr>
+    </tbody>
+  </table>
+
+  <!-- L5 Tests -->
+  <h2>L5: Resilience Tests</h2>
+  <p><strong>File:</strong> <code>tests/test_07_chaos.py</code></p>
+  <table>
+    <thead><tr><th>#</th><th>Class</th><th>Test</th><th>Validates</th></tr></thead>
+    <tbody>
+      <tr><td>1</td><td>TestSPIREAgentResilience</td><td>test_auth_recovers_after_agent_restart</td><td>Auth works after SPIRE Agent restart</td></tr>
+      <tr><td>2</td><td>TestKeycloakResilience</td><td>test_keycloak_recovers_after_restart</td><td>Keycloak serves tokens after restart</td></tr>
+      <tr><td>3</td><td>TestOIDCResilience</td><td>test_oidc_discovery_recovers</td><td>JWKS available after OIDC restart</td></tr>
+      <tr><td>4</td><td>TestSVIDLifecycle</td><td>test_svid_auto_renewal</td><td>Fresh SVIDs issued on each request</td></tr>
+      <tr><td>5</td><td>TestSVIDLifecycle</td><td>test_concurrent_svid_requests</td><td>5 concurrent SVID requests all succeed</td></tr>
+      <tr><td>6</td><td>TestLoadResilience</td><td>test_rapid_sequential_auth_requests</td><td>10 sequential auth requests pass</td></tr>
+      <tr><td>7</td><td>TestLoadResilience</td><td>test_parallel_auth_requests</td><td>5 staggered parallel requests succeed</td></tr>
+    </tbody>
+  </table>
+
+  <h2>L5: Security Hardening Tests</h2>
+  <p><strong>File:</strong> <code>tests/test_08_security_hardening.py</code></p>
+  <table>
+    <thead><tr><th>#</th><th>Class</th><th>Test</th><th>Validates</th></tr></thead>
+    <tbody>
+      <tr><td>1</td><td>TestNoStaticSecrets</td><td>test_no_client_secret_in_mcp_client_env</td><td>No SECRET/KEY/PASSWORD env vars</td></tr>
+      <tr><td>2</td><td>TestNoStaticSecrets</td><td>test_no_secrets_in_configmaps</td><td>No secrets in ConfigMap values</td></tr>
+      <tr><td>3</td><td>TestWorkloadIsolation</td><td>test_different_service_accounts_get_different_svids</td><td>SA isolation in SPIFFE IDs</td></tr>
+      <tr><td>4</td><td>TestJWKSSecurity</td><td>test_jwks_no_private_key_exposure</td><td>No private fields in JWKS</td></tr>
+      <tr><td>5</td><td>TestJWKSSecurity</td><td>test_jwks_uses_strong_algorithm</td><td>RSA >= 2048 or EC P-256+</td></tr>
+      <tr><td>6</td><td>TestKeycloakSecurity</td><td>test_keycloak_security_headers</td><td>X-Content-Type-Options: nosniff</td></tr>
+    </tbody>
+  </table>
+
+  <!-- Manual Positive Testing -->
+  <h2>Manual Positive Testing Guide</h2>
+  <p>5 scenarios to verify the system works correctly.</p>
+
+  <div class="card">
+    <h3>Scenario 1: Fetch JWT SVID</h3>
+    <pre><code class="language-bash">kubectl -n mcp-demo exec deploy/mcp-client -- python3 -c "
+from spiffe import WorkloadApiClient
+c = WorkloadApiClient('unix:///spiffe-workload-api/spire-agent.sock')
+s = c.fetch_jwt_svid(audience={'http://keycloak.mcp-demo.svc.cluster.local:8080/realms/mcp-demo'})
+print('SPIFFE ID:', s.spiffe_id)
+print('Token:', s.token[:80], '...')
+print('Expiry:', s.expiry)
+"</code></pre>
+    <p><strong>Expected:</strong> SPIFFE ID = <code>spiffe://example.org/ns/mcp-demo/sa/mcp-client</code>, token is a 3-part JWT, expiry ~5 min ahead.</p>
+  </div>
+
+  <div class="card">
+    <h3>Scenario 2: Token Exchange</h3>
+    <pre><code class="language-bash">kubectl -n mcp-demo exec deploy/mcp-client -- bash /scripts/test-spiffe-auth.sh</code></pre>
+    <p><strong>Expected:</strong> "SUCCESS! Got access token:" with token_type=Bearer.</p>
+  </div>
+
+  <div class="card">
+    <h3>Scenario 3: Verify OIDC Discovery</h3>
+    <pre><code class="language-bash"># From host machine
+curl -sk https://localhost:30443/.well-known/openid-configuration | jq .
+curl -sk https://localhost:30443/keys | jq '.keys | length'</code></pre>
+    <p><strong>Expected:</strong> OIDC config with issuer and jwks_uri. At least 1 key in JWKS.</p>
+  </div>
+
+  <div class="card">
+    <h3>Scenario 4: Keycloak Admin Console</h3>
+    <pre><code class="language-bash"># Open in browser
+open http://localhost:30080/admin
+# Login: admin / admin
+# Navigate: Clients > spiffe://example.org/ns/mcp-demo/sa/mcp-client</code></pre>
+    <p><strong>Expected:</strong> Client exists with authenticator type <code>client-spiffe-jwt</code>.</p>
+  </div>
+
+  <div class="card">
+    <h3>Scenario 5: Full Test Suite</h3>
+    <pre><code class="language-bash">./scripts/run-all-tests.sh</code></pre>
+    <p><strong>Expected:</strong> 80 tests passed, 0 failed.</p>
+  </div>
+
+  <!-- Manual Negative Testing -->
+  <h2>Manual Negative Testing Guide</h2>
+  <p>6 scenarios to verify the system rejects invalid requests.</p>
+
+  <div class="card" style="border-left-color:#e74c3c;">
+    <h3>Scenario 1: Garbage Token</h3>
+    <pre><code class="language-bash">curl -s -X POST http://localhost:30080/realms/mcp-demo/protocol/openid-connect/token \
+  -d "grant_type=client_credentials" \
+  -d "client_assertion_type=urn:ietf:params:oauth:client-assertion-type:jwt-bearer" \
+  -d "client_assertion=not.a.real-jwt" | jq .</code></pre>
+    <p><strong>Expected:</strong> 400 or 401 error response.</p>
+  </div>
+
+  <div class="card" style="border-left-color:#e74c3c;">
+    <h3>Scenario 2: Empty Assertion</h3>
+    <pre><code class="language-bash">curl -s -X POST http://localhost:30080/realms/mcp-demo/protocol/openid-connect/token \
+  -d "grant_type=client_credentials" \
+  -d "client_assertion_type=urn:ietf:params:oauth:client-assertion-type:jwt-bearer" \
+  -d "client_assertion=" | jq .</code></pre>
+    <p><strong>Expected:</strong> 400 or 401 error response.</p>
+  </div>
+
+  <div class="card" style="border-left-color:#e74c3c;">
+    <h3>Scenario 3: Wrong Assertion Type</h3>
+    <pre><code class="language-bash">curl -s -X POST http://localhost:30080/realms/mcp-demo/protocol/openid-connect/token \
+  -d "grant_type=client_credentials" \
+  -d "client_assertion_type=urn:ietf:params:oauth:client-assertion-type:jwt-spiffe" \
+  -d "client_assertion=eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJ0ZXN0In0.fake" | jq .</code></pre>
+    <p><strong>Expected:</strong> 400 &mdash; unrecognized assertion type (SPI uses jwt-bearer, not jwt-spiffe).</p>
+  </div>
+
+  <div class="card" style="border-left-color:#e74c3c;">
+    <h3>Scenario 4: Missing grant_type</h3>
+    <pre><code class="language-bash">curl -s -X POST http://localhost:30080/realms/mcp-demo/protocol/openid-connect/token \
+  -d "client_assertion_type=urn:ietf:params:oauth:client-assertion-type:jwt-bearer" \
+  -d "client_assertion=some.jwt.token" | jq .</code></pre>
+    <p><strong>Expected:</strong> 400 &mdash; missing grant_type parameter.</p>
+  </div>
+
+  <div class="card" style="border-left-color:#e74c3c;">
+    <h3>Scenario 5: Invalid DCR Software Statement</h3>
+    <pre><code class="language-bash">curl -s -X POST http://localhost:30080/realms/mcp-demo/clients-registrations/spiffe-dcr/register \
+  -H "Content-Type: application/json" \
+  -d '{"software_statement": "invalid.jwt.token"}' | jq .</code></pre>
+    <p><strong>Expected:</strong> 400 or 401 &mdash; invalid software statement.</p>
+  </div>
+
+  <div class="card" style="border-left-color:#e74c3c;">
+    <h3>Scenario 6: JWKS Private Key Check</h3>
+    <pre><code class="language-bash">curl -sk https://localhost:30443/keys | jq '.keys[] | keys' | grep -E '"d"|"p"|"q"'</code></pre>
+    <p><strong>Expected:</strong> No output &mdash; private fields must never appear in JWKS.</p>
+  </div>
+
+  <!-- Validation Gates -->
+  <h2>Validation Gates Checklist</h2>
+  <table>
+    <thead><tr><th>Phase</th><th>Gate</th><th>Command</th></tr></thead>
+    <tbody>
+      <tr><td>1</td><td>2 nodes Ready</td><td><code>kubectl get nodes --context kind-spiffe-mcp-demo</code></td></tr>
+      <tr><td>2</td><td>SPIRE pods Running</td><td><code>kubectl -n spire-system get pods</code></td></tr>
+      <tr><td>2</td><td>Server healthy</td><td><code>kubectl -n spire-system exec deploy/spire-server -- /opt/spire/bin/spire-server healthcheck</code></td></tr>
+      <tr><td>3</td><td>Image exists</td><td><code>docker images | grep keycloak-spiffe</code></td></tr>
+      <tr><td>4</td><td>Keycloak healthy</td><td><code>curl -s http://localhost:30080/realms/master | jq .realm</code></td></tr>
+      <tr><td>5</td><td>SVID fetchable</td><td><code>kubectl -n mcp-demo exec deploy/mcp-client -- python3 -c "..."</code></td></tr>
+      <tr><td>5</td><td>All tests pass</td><td><code>./scripts/run-all-tests.sh</code></td></tr>
+    </tbody>
+  </table>
+
+</main>
+
+<footer class="footer">
+  <p>SPIFFE + MCP OAuth Authentication System &mdash; <a href="index.html">Home</a></p>
+</footer>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-bash.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-python.min.js"></script>
+</body>
+</html>

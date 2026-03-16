@@ -1,0 +1,7 @@
+FROM golang:1.22 AS builder
+WORKDIR /build
+RUN git clone https://github.com/christian-posta/spire-software-statements.git .
+RUN go mod tidy && make build-host
+
+FROM busybox:1.37.0
+COPY --from=builder /build/build/spire-software-statements /spire-software-statements

@@ -1,0 +1,42 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: mcp-client
+  namespace: mcp-demo
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mcp-client
+  namespace: mcp-demo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mcp-client
+  template:
+    metadata:
+      labels:
+        app: mcp-client
+    spec:
+      serviceAccountName: mcp-client
+      containers:
+        - name: mcp-client
+          image: python:3.12-slim
+          command: ["sleep", "infinity"]  # Interactive demo pod
+          env:
+            - name: SPIFFE_ENDPOINT_SOCKET
+              value: "unix:///spiffe-workload-api/spire-agent.sock"
+            - name: KEYCLOAK_URL
+              value: "http://keycloak.mcp-demo.svc.cluster.local:8080"
+            - name: KEYCLOAK_REALM
+              value: "mcp-demo"
+          volumeMounts:
+            - name: spiffe-workload-api
+              mountPath: /spiffe-workload-api
+              readOnly: true
+      volumes:
+        - name: spiffe-workload-api
+          csi:
+            driver: "csi.spiffe.io"
+            readOnly: true

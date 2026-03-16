@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Authentication Flows &mdash; SPIFFE + MCP OAuth</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-okaidia.min.css">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<nav class="nav">
+  <div class="nav-inner">
+    <span class="nav-brand">SPIFFE + MCP OAuth</span>
+    <button class="hamburger" onclick="document.querySelector('.nav-links').classList.toggle('open')" aria-label="Menu">&#9776;</button>
+    <div class="nav-links">
+      <a href="index.html">Home</a>
+      <a href="concepts.html">Concepts</a>
+      <a href="architecture.html">Architecture</a>
+      <a href="deployment.html">Deployment</a>
+      <a href="auth-flows.html" class="active">Auth Flows</a>
+      <a href="troubleshooting.html">Troubleshooting</a>
+      <a href="testing.html">Testing</a>
+      <a href="product-manual.html">Product Manual</a>
+    </div>
+  </div>
+</nav>
+
+<main class="container">
+  <div class="breadcrumb"><a href="index.html">Home</a> &raquo; Authentication Flows Explained</div>
+
+  <h1>Authentication Flows Explained</h1>
+  <p>Two authentication flows: <strong>Flow B (Token Exchange)</strong> for obtaining access tokens, and <strong>Flow A (Dynamic Client Registration)</strong> for automatic client setup.</p>
+
+  <!-- Flow B: Token Exchange -->
+  <h2>Flow B: Token Exchange (Primary Flow)</h2>
+  <p>The MCP client uses a JWT SVID as a <code>client_assertion</code> to obtain an OAuth access token from Keycloak &mdash; <strong>no client_secret needed</strong>.</p>
+
+  <div class="diagram">
+    <div class="diagram-title">Token Exchange Sequence Diagram</div>
+    <div class="sequence">
+      <div class="seq-step">
+        <div class="seq-from">MCP Client</div>
+        <div class="seq-msg"><span class="seq-num">1</span> Fetch JWT SVID (audience = Keycloak realm URL)</div>
+        <div class="seq-to">SPIRE Agent</div>
+      </div>
+      <div class="seq-step">
+        <div class="seq-from">SPIRE Agent</div>
+        <div class="seq-msg"><span class="seq-num">2</span> Signed JWT SVID (sub = SPIFFE ID, iss = OIDC issuer)</div>
+        <div class="seq-to">MCP Client</div>
+      </div>
+      <div class="seq-step">
+        <div class="seq-from">MCP Client</div>
+        <div class="seq-msg"><span class="seq-num">3</span> POST /token (client_assertion = JWT SVID)</div>
+        <div class="seq-to">Keycloak</div>
+      </div>
+      <div class="seq-step">
+        <div class="seq-from">Keycloak</div>
+        <div class="seq-msg"><span class="seq-num">4</span> GET /keys (fetch JWKS public keys)</div>
+        <div class="seq-to">OIDC Discovery</div>
+      </div>
+      <div class="seq-step">
+        <div class="seq-from">Keycloak</div>
+        <div class="seq-msg"><span class="seq-num">5</span> Verify signature, check issuer, enforce single-use</div>
+        <div class="seq-to">Keycloak (internal)</div>
+      </div>
+      <div class="seq-step">
+        <div class="seq-from">Keycloak</div>
+        <div class="seq-msg"><span class="seq-num">6</span> Access Token (Bearer JWT)</div>
+        <div class="seq-to">MCP Client</div>
+      </div>
+    </div>
+  </div>
+
+  <h3>Step-by-Step with Code</h3>
+
+  <h4>Step 1-2: Fetch JWT SVID from SPIRE</h4>
+  <pre><code class="language-python">from spiffe import WorkloadApiClient
+
+# Connect to SPIRE Agent via Workload API (mounted by CSI Driver)
+client = WorkloadApiClient("unix:///spiffe-workload-api/spire-agent.sock")
+
+# Request JWT SVID with audience = Keycloak realm URL
+keycloak_url = "http://keycloak.mcp-demo.svc.cluster.local:8080"
+realm = "mcp-demo"
+audience = f"{keycloak_url}/realms/{realm}"
+
+jwt_svid = client.fetch_jwt_svid(audience={audience})
+print(f"SPIFFE ID: {jwt_svid.spiffe_id}")
+print(f"Token (first 80 chars): {jwt_svid.token[:80]}...")
+print(f"Expires: {jwt_svid.expiry}")  # ~5 minutes from now</code></pre>
+
+  <h4>Step 3-6: Exchange SVID for Access Token</h4>
+  <pre><code class="language-python">import requests
+
+token_url = f"{keycloak_url}/realms/{realm}/protocol/openid-connect/token"
+
+# POST to token endpoint: JWT SVID replaces client_secret
+response = requests.post(token_url, data={
+    "grant_type": "client_credentials",
+    "client_assertion_type": "urn:ietf:params:oauth:client-assertion-type:jwt-spiffe",
+    "client_assertion": jwt_svid.token,
+    "scope": "openid"
+})
+
+if response.status_code == 200:
+    data = response.json()
+    print(f"access_token: {data['access_token'][:60]}...")
+    print(f"token_type: {data['token_type']}")      # Bearer
+    print(f"expires_in: {data['expires_in']}s")
+else:
+    print(f"FAILED: {response.status_code} {response.text}")</code></pre>
+
+  <h4>Equivalent curl Command</h4>
+  <pre><code class="language-bash"># From inside the MCP client pod:
+JWT_SVID=$(python3 -c "
+from spiffe import WorkloadApiClient
+c = WorkloadApiClient('unix:///spiffe-workload-api/spire-agent.sock')
+s = c.fetch_jwt_svid(audience={'http://keycloak.mcp-demo.svc.cluster.local:8080/realms/mcp-demo'})
+print(s.token)
+")
+
+curl -s -X POST \
+  http://keycloak.mcp-demo.svc.cluster.local:8080/realms/mcp-demo/protocol/openid-connect/token \
+  -d "grant_type=client_credentials" \
+  -d "client_assertion_type=urn:ietf:params:oauth:client-assertion-type:jwt-spiffe" \
+  -d "client_assertion=${JWT_SVID}" \
+  -d "scope=openid" | jq .</code></pre>
+
+  <h3>What Keycloak's SPIFFE SPI Does (Steps 4-5)</h3>
+  <ol>
+    <li><strong>Extracts</strong> the <code>client_assertion</code> from the POST body</li>
+    <li><strong>Decodes</strong> the JWT header to get the <code>kid</code> (Key ID)</li>
+    <li><strong>Fetches JWKS</strong> from the SPIRE OIDC Discovery Provider at the configured URL</li>
+    <li><strong>Matches</strong> the JWT's <code>kid</code> to a public key in the JWKS</li>
+    <li><strong>Verifies</strong> the JWT signature using the matched public key</li>
+    <li><strong>Validates</strong> claims: <code>iss</code> matches trust domain, <code>sub</code> is a valid SPIFFE ID, <code>aud</code> matches realm URL, <code>exp</code> is in the future</li>
+    <li><strong>Enforces single-use</strong>: rejects JWTs with the same <code>iss+sub+iat</code> combination (replay protection)</li>
+    <li><strong>Maps</strong> the <code>sub</code> (SPIFFE ID) to a registered Keycloak client</li>
+    <li><strong>Issues</strong> an access token for the matched client</li>
+  </ol>
+
+  <!-- Flow A: DCR -->
+  <h2>Flow A: Dynamic Client Registration (DCR)</h2>
+  <p>Automatic OAuth client creation using a SPIFFE software statement. No manual client setup in Keycloak admin needed.</p>
+
+  <div class="diagram">
+    <div class="diagram-title">DCR Sequence Diagram</div>
+    <div class="sequence">
+      <div class="seq-step">
+        <div class="seq-from">MCP Client</div>
+        <div class="seq-msg"><span class="seq-num">1</span> Fetch JWT SVID with DCR claims</div>
+        <div class="seq-to">SPIRE Agent</div>
+      </div>
+      <div class="seq-step">
+        <div class="seq-from">MCP Client</div>
+        <div class="seq-msg"><span class="seq-num">2</span> POST /register (software_statement = JWT SVID)</div>
+        <div class="seq-to">Keycloak DCR</div>
+      </div>
+      <div class="seq-step">
+        <div class="seq-from">Keycloak DCR</div>
+        <div class="seq-msg"><span class="seq-num">3</span> Verify JWT signature via JWKS</div>
+        <div class="seq-to">OIDC Discovery</div>
+      </div>
+      <div class="seq-step">
+        <div class="seq-from">Keycloak DCR</div>
+        <div class="seq-msg"><span class="seq-num">4</span> Auto-register OAuth client (clientId = SPIFFE ID)</div>
+        <div class="seq-to">Keycloak (internal)</div>
+      </div>
+      <div class="seq-step">
+        <div class="seq-from">Keycloak</div>
+        <div class="seq-msg"><span class="seq-num">5</span> Client credentials (clientId = SPIFFE ID)</div>
+        <div class="seq-to">MCP Client</div>
+      </div>
+    </div>
+  </div>
+
+  <h3>DCR Code Example</h3>
+  <pre><code class="language-python">import requests
+
+keycloak_url = "http://keycloak.mcp-demo.svc.cluster.local:8080"
+realm = "mcp-demo"
+dcr_url = f"{keycloak_url}/realms/{realm}/clients-registrations/spiffe-dcr/register"
+
+# JWT SVID enriched with software statement claims by SPIRE's
+# CredentialComposer plugin (adds jwks_url, client_auth claims)
+response = requests.post(dcr_url, json={
+    "software_statement": jwt_svid.token
+}, headers={"Content-Type": "application/json"})
+
+if response.status_code in [200, 201]:
+    data = response.json()
+    print(f"client_id: {data.get('clientId')}")
+    print(f"auth_method: {data.get('clientAuthenticatorType')}")
+</code></pre>
+
+  <h3>Required JWT Claims for DCR</h3>
+  <table>
+    <thead><tr><th>Claim</th><th>Value</th><th>Purpose</th></tr></thead>
+    <tbody>
+      <tr><td><code>sub</code></td><td><code>spiffe://example.org/ns/mcp-demo/sa/mcp-client</code></td><td>Becomes the <code>client_id</code></td></tr>
+      <tr><td><code>iss</code></td><td>SPIRE server OIDC issuer URL</td><td>Verified against trust domain</td></tr>
+      <tr><td><code>jwks_url</code></td><td>SPIRE OIDC Discovery JWKS URL</td><td>Client's public key endpoint</td></tr>
+      <tr><td><code>client_auth</code></td><td><code>client-spiffe-jwt</code></td><td>Auth method for the registered client</td></tr>
+      <tr><td><code>aud</code></td><td>Keycloak realm URL</td><td>Target authorization server</td></tr>
+      <tr><td><code>exp</code>, <code>iat</code></td><td>Standard JWT timestamps</td><td>Token freshness</td></tr>
+    </tbody>
+  </table>
+
+  <!-- Security Comparison -->
+  <h2>Security Comparison: SPIFFE vs Client Secrets</h2>
+  <table>
+    <thead>
+      <tr><th>Property</th><th>Client Secret</th><th>SPIFFE JWT SVID</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Credential lifetime</td><td>Long-lived (months/years)</td><td>Short-lived (5 minutes)</td></tr>
+      <tr><td>Rotation</td><td>Manual or scheduled</td><td>Automatic (every request)</td></tr>
+      <tr><td>Storage risk</td><td>Must store in env vars, vaults</td><td>Never stored &mdash; issued on demand</td></tr>
+      <tr><td>Verification</td><td>String comparison</td><td>Cryptographic signature verification</td></tr>
+      <tr><td>Identity binding</td><td>None &mdash; anyone with the secret</td><td>Bound to workload attestation (node + namespace + SA)</td></tr>
+      <tr><td>Leak impact</td><td>Full access until rotated</td><td>Useless after 5 minutes; replay detection</td></tr>
+      <tr><td>Audit trail</td><td>Who has the secret?</td><td>Attestation logs show exactly which workload</td></tr>
+      <tr><td>Zero-trust ready</td><td>No</td><td>Yes &mdash; identity is continuously verified</td></tr>
+    </tbody>
+  </table>
+
+  <!-- Trust Chain Detail -->
+  <h2>Trust Chain Verification</h2>
+  <div class="diagram">
+    <div class="diagram-title">How Cryptographic Trust Flows</div>
+    <div class="pipeline">
+      <div>
+        <div class="pipeline-step">SPIRE CA</div>
+        <div class="pipeline-label">Root of trust</div>
+      </div>
+      <span class="pipeline-arrow">&rarr;</span>
+      <div>
+        <div class="pipeline-step teal">signs</div>
+        <div class="pipeline-label">&nbsp;</div>
+      </div>
+      <span class="pipeline-arrow">&rarr;</span>
+      <div>
+        <div class="pipeline-step">JWT SVID</div>
+        <div class="pipeline-label">Contains sub, aud, exp</div>
+      </div>
+      <span class="pipeline-arrow">&rarr;</span>
+      <div>
+        <div class="pipeline-step teal">public key in</div>
+        <div class="pipeline-label">&nbsp;</div>
+      </div>
+      <span class="pipeline-arrow">&rarr;</span>
+      <div>
+        <div class="pipeline-step light">OIDC JWKS</div>
+        <div class="pipeline-label">/keys endpoint</div>
+      </div>
+      <span class="pipeline-arrow">&rarr;</span>
+      <div>
+        <div class="pipeline-step teal">fetched by</div>
+        <div class="pipeline-label">&nbsp;</div>
+      </div>
+      <span class="pipeline-arrow">&rarr;</span>
+      <div>
+        <div class="pipeline-step">Keycloak SPI</div>
+        <div class="pipeline-label">Verifies signature</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="callout callout-success">
+    <strong>Critical security property:</strong> SPIRE's signing private key <em>never</em> leaves the SPIRE Server. Keycloak only accesses the public key via JWKS. This is the same trust model used by Google, Auth0, and every OIDC provider.
+  </div>
+
+  <h3>IETF Draft Reference</h3>
+  <p>This implementation follows <code>draft-ietf-oauth-spiffe-client-auth-01</code> (March 2026), which defines:</p>
+  <ul>
+    <li>A new <code>client_assertion_type</code> value: <code>urn:ietf:params:oauth:client-assertion-type:jwt-spiffe</code></li>
+    <li>Validation rules for SPIFFE JWT SVIDs used as client assertions</li>
+    <li>Integration with OAuth 2.0 Dynamic Client Registration</li>
+    <li>JWKS-based trust establishment between SPIRE and OAuth Authorization Servers</li>
+  </ul>
+
+</main>
+
+<footer class="footer">
+  <p>SPIFFE + MCP OAuth Authentication System &mdash; <a href="index.html">Home</a></p>
+</footer>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-bash.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-json.min.js"></script>
+</body>
+</html>

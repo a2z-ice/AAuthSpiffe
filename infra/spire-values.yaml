@@ -1,0 +1,61 @@
+global:
+  spire:
+    clusterName: "spiffe-mcp-demo"
+    trustDomain: "example.org"
+    # The JWT issuer must match what Keycloak will use to fetch JWKS
+    jwtIssuer: "https://oidc-discovery.example.org"
+    caSubject:
+      country: US
+      organization: SpiffeMCPDemo
+
+spire-server:
+  enabled: true
+  controllerManager:
+    enabled: true
+    identities:
+      clusterSPIFFEIDs:
+        default:
+          enabled: true
+        oidc-discovery-provider:
+          enabled: true
+
+  # CredentialComposer plugin: enriches JWT SVIDs with DCR claims
+  customPlugins:
+    credentialComposer:
+      software_statements:
+        plugin_cmd: "/opt/spire/plugins/spire-software-statements"
+        plugin_checksum: ""
+        plugin_data:
+          jwks_url: "https://spire-spiffe-oidc-discovery-provider.spire-system.svc.cluster.local/keys"
+          client_auth: "client-spiffe-jwt"
+
+  # Init container to copy the plugin binary into the server pod
+  initContainers:
+    - name: copy-software-statements
+      image: spire-software-statements:latest
+      imagePullPolicy: Never
+      command: ["cp", "/spire-software-statements", "/opt/spire/plugins/spire-software-statements"]
+      volumeMounts:
+        - name: spire-plugins
+          mountPath: /opt/spire/plugins
+
+  extraVolumes:
+    - name: spire-plugins
+      emptyDir: {}
+
+  extraVolumeMounts:
+    - name: spire-plugins
+      mountPath: /opt/spire/plugins
+      readOnly: true
+
+spire-agent:
+  enabled: true
+
+spiffe-csi-driver:
+  enabled: true
+
+spiffe-oidc-discovery-provider:
+  enabled: true
+
+spire-controller-manager:
+  enabled: true

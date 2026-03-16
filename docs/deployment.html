@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Deployment Guide &mdash; SPIFFE + MCP OAuth</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-okaidia.min.css">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<nav class="nav">
+  <div class="nav-inner">
+    <span class="nav-brand">SPIFFE + MCP OAuth</span>
+    <button class="hamburger" onclick="document.querySelector('.nav-links').classList.toggle('open')" aria-label="Menu">&#9776;</button>
+    <div class="nav-links">
+      <a href="index.html">Home</a>
+      <a href="concepts.html">Concepts</a>
+      <a href="architecture.html">Architecture</a>
+      <a href="deployment.html" class="active">Deployment</a>
+      <a href="auth-flows.html">Auth Flows</a>
+      <a href="troubleshooting.html">Troubleshooting</a>
+      <a href="testing.html">Testing</a>
+      <a href="product-manual.html">Product Manual</a>
+    </div>
+  </div>
+</nav>
+
+<main class="container">
+  <div class="breadcrumb"><a href="index.html">Home</a> &raquo; Step-by-Step Deployment Guide</div>
+
+  <h1>Step-by-Step Deployment Guide</h1>
+  <p>Five ordered phases, each with exact commands, annotated configs, and validation gates.</p>
+
+  <!-- Dependency Chart -->
+  <h2>Phase Dependencies</h2>
+  <div class="diagram">
+    <div class="diagram-title">Deployment Phase Flow</div>
+    <div class="phase-flow">
+      <div class="phase-box">
+        <div class="phase-name">Phase 1: Infrastructure</div>
+        <div class="phase-output">Kind cluster with 2 nodes + NodePort mappings</div>
+      </div>
+      <div class="phase-connector"></div>
+      <div class="phase-box">
+        <div class="phase-name">Phase 2: SPIRE Stack</div>
+        <div class="phase-output">SPIRE Server, Agent, OIDC, CSI, Controller Manager</div>
+      </div>
+      <div class="phase-connector"></div>
+      <div class="phase-box">
+        <div class="phase-name">Phase 3: Custom Builds</div>
+        <div class="phase-output">keycloak-spiffe:latest loaded into Kind</div>
+      </div>
+      <div class="phase-connector"></div>
+      <div class="phase-box">
+        <div class="phase-name">Phase 4: Keycloak + Data</div>
+        <div class="phase-output">Keycloak serving at :30080, realm imported</div>
+      </div>
+      <div class="phase-connector"></div>
+      <div class="phase-box">
+        <div class="phase-name">Phase 5: Workloads + Validation</div>
+        <div class="phase-output">MCP pods running, test-spiffe-auth.sh passes</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Prerequisites -->
+  <h2>Prerequisites</h2>
+  <table>
+    <thead><tr><th>Tool</th><th>Purpose</th><th>Install</th></tr></thead>
+    <tbody>
+      <tr><td>Docker Desktop</td><td>Container runtime for Kind</td><td><code>brew install --cask docker</code></td></tr>
+      <tr><td>kind</td><td>Kubernetes-in-Docker</td><td><code>brew install kind</code></td></tr>
+      <tr><td>kubectl</td><td>Kubernetes CLI</td><td><code>brew install kubectl</code></td></tr>
+      <tr><td>helm</td><td>K8s package manager</td><td><code>brew install helm</code></td></tr>
+      <tr><td>jq</td><td>JSON processing</td><td><code>brew install jq</code></td></tr>
+    </tbody>
+  </table>
+  <pre><code class="language-bash"># Verify all prerequisites
+docker version && kind version && kubectl version --client && helm version && jq --version</code></pre>
+
+  <div class="callout callout-warn">
+    <strong>Docker Desktop resources:</strong> Allocate at least 4 CPUs and 8GB RAM. The SPIRE + Keycloak + PostgreSQL stack is memory-intensive.
+  </div>
+
+  <!-- Phase 1 -->
+  <h2>Phase 1: Infrastructure</h2>
+  <p>Create the Kind cluster with NodePort mappings for host access.</p>
+
+  <h3>1.1 Kind Cluster Config</h3>
+  <pre><code class="language-yaml"># infra/kind-config.yaml
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: spiffe-mcp-demo
+nodes:
+  - role: control-plane
+    extraPortMappings:
+      - containerPort: 30080    # Keycloak
+        hostPort: 30080
+        protocol: TCP
+      - containerPort: 30443    # OIDC Discovery
+        hostPort: 30443
+        protocol: TCP
+  - role: worker
+    labels:
+      spire-agent: "true"</code></pre>
+
+  <h3>1.2 Create Cluster</h3>
+  <pre><code class="language-bash"># Idempotent: check before creating
+kind get clusters | grep -q spiffe-mcp-demo || kind create cluster --config infra/kind-config.yaml
+kubectl cluster-info --context kind-spiffe-mcp-demo</code></pre>
+
+  <h3>1.3 Validation Gate</h3>
+  <pre><code class="language-bash"># Must show 2 nodes in Ready state
+kubectl get nodes --context kind-spiffe-mcp-demo
+# Expected: control-plane Ready, worker Ready</code></pre>
+
+  <div class="callout callout-danger">
+    <strong>Troubleshooting:</strong> If <code>kind create cluster</code> fails with Docker errors, ensure Docker Desktop is running and has enough resources allocated.
+  </div>
+
+  <!-- Phase 2 -->
+  <h2>Phase 2: SPIRE Stack</h2>
+  <p>Deploy SPIRE via Helm hardened charts.</p>
+
+  <h3>2.1 Add Helm Repos</h3>
+  <pre><code class="language-bash">helm repo add spiffe https://spiffe.github.io/helm-charts-hardened/
+helm repo update</code></pre>
+
+  <h3>2.2 SPIRE Values</h3>
+  <pre><code class="language-yaml"># infra/spire-values.yaml (key sections)
+global:
+  spire:
+    clusterName: "spiffe-mcp-demo"
+    trustDomain: "example.org"
+    jwtIssuer: "https://oidc-discovery.example.org"
+
+spire-server:
+  enabled: true
+  replicaCount: 1
+  persistence:
+    type: pvc
+    size: 1Gi
+  controllerManager:
+    enabled: true
+
+spire-agent:
+  enabled: true
+
+spiffe-csi-driver:
+  enabled: true
+
+spiffe-oidc-discovery-provider:
+  enabled: true
+  config:
+    domains:
+      - "oidc-discovery.example.org"
+      - "spiffe-oidc-discovery-provider.spire-system.svc.cluster.local"</code></pre>
+
+  <h3>2.3 Install SPIRE</h3>
+  <pre><code class="language-bash"># Install CRDs first
+helm upgrade --install --create-namespace -n spire-system \
+  spire-crds spire-crds \
+  --repo https://spiffe.github.io/helm-charts-hardened/ --wait
+
+# Install SPIRE stack
+helm upgrade --install -n spire-system \
+  spire spire \
+  --repo https://spiffe.github.io/helm-charts-hardened/ \
+  --values infra/spire-values.yaml \
+  --wait --timeout 300s</code></pre>
+
+  <h3>2.4 Validation Gate</h3>
+  <pre><code class="language-bash"># All pods Running
+kubectl -n spire-system get pods
+
+# Server health
+kubectl -n spire-system exec deploy/spire-server -- \
+  /opt/spire/bin/spire-server healthcheck
+
+# OIDC Discovery responds (from host)
+curl -sk https://localhost:30443/.well-known/openid-configuration | jq .issuer</code></pre>
+
+  <div class="callout callout-danger">
+    <strong>Troubleshooting:</strong> SPIRE Agent <code>CrashLoopBackOff</code> usually means the Server isn't ready yet. Wait 60s and check server health first. Helm install timeout often means PVC provisioning issues &mdash; check <code>kubectl get sc</code>.
+  </div>
+
+  <!-- Phase 3 -->
+  <h2>Phase 3: Custom Builds</h2>
+  <p>Build the custom Keycloak image with SPIFFE SPIs and load into Kind.</p>
+
+  <h3>3.1 Build Custom Images</h3>
+  <pre><code class="language-bash"># Build Keycloak with SPIFFE SPIs (multi-stage, ~5-10 min first time)
+docker build -f docker/Dockerfile.keycloak-custom -t keycloak-spiffe:latest .
+
+# Build SPIRE plugin image
+docker build -f docker/Dockerfile.spire-plugin -t spire-software-statements:latest .</code></pre>
+
+  <h3>3.2 Load into Kind</h3>
+  <pre><code class="language-bash"># Load images (no registry needed)
+kind load docker-image keycloak-spiffe:latest --name spiffe-mcp-demo
+kind load docker-image spire-software-statements:latest --name spiffe-mcp-demo</code></pre>
+
+  <h3>3.3 Validation Gate</h3>
+  <pre><code class="language-bash">docker images | grep keycloak-spiffe
+docker images | grep spire-software-statements</code></pre>
+
+  <!-- Phase 4 -->
+  <h2>Phase 4: Keycloak + Data</h2>
+  <p>Deploy PostgreSQL, Keycloak, and configure the OIDC NodePort.</p>
+
+  <h3>4.1 Deploy PostgreSQL</h3>
+  <pre><code class="language-bash">kubectl apply -f manifests/postgres.yaml
+kubectl -n mcp-demo wait --for=condition=ready pod -l app=postgres --timeout=120s</code></pre>
+
+  <h3>4.2 Deploy Keycloak</h3>
+  <pre><code class="language-bash"># Keycloak imports realm-config.json on first boot
+kubectl apply -f manifests/keycloak.yaml
+kubectl -n mcp-demo wait --for=condition=ready pod -l app=keycloak --timeout=300s
+
+# OIDC Discovery NodePort for host access
+kubectl apply -f manifests/oidc-nodeport.yaml</code></pre>
+
+  <h3>4.3 Configure Keycloak SPIFFE Flow</h3>
+  <pre><code class="language-bash"># Run the configuration script (creates spiffe-clients auth flow)
+./scripts/configure-keycloak.sh</code></pre>
+  <p>This script:</p>
+  <ol>
+    <li>Gets an admin token from Keycloak</li>
+    <li>Creates a "spiffe-clients" authentication flow (copy of "clients")</li>
+    <li>Adds the <code>client-spiffe-jwt</code> authenticator execution to the flow</li>
+    <li>Binds the realm to use the spiffe-clients flow</li>
+    <li>Updates JWKS URLs on the realm and SPIFFE client</li>
+  </ol>
+
+  <h3>4.4 Validation Gate</h3>
+  <pre><code class="language-bash"># Keycloak health
+curl -s http://localhost:30080/realms/master | jq .realm
+
+# Realm OIDC
+curl -s http://localhost:30080/realms/mcp-demo/.well-known/openid-configuration | jq .issuer
+
+# Admin console accessible at http://localhost:30080/admin (admin/admin)</code></pre>
+
+  <div class="callout callout-danger">
+    <strong>Troubleshooting:</strong> <code>ImagePullBackOff</code> on keycloak-spiffe means the image wasn't loaded into Kind. Re-run <code>kind load docker-image keycloak-spiffe:latest --name spiffe-mcp-demo</code>. If Keycloak shows "Connection refused" to postgres, wait for PostgreSQL readiness.
+  </div>
+
+  <!-- Phase 5 -->
+  <h2>Phase 5: Workloads + Validation</h2>
+  <p>Deploy MCP workloads, create SPIFFE IDs, and run the full test suite.</p>
+
+  <h3>5.1 Create ClusterSPIFFEIDs</h3>
+  <pre><code class="language-bash">kubectl apply -f manifests/cluster-spiffe-ids.yaml</code></pre>
+  <pre><code class="language-yaml"># ClusterSPIFFEID for mcp-client
+apiVersion: spire.spiffe.io/v1alpha1
+kind: ClusterSPIFFEID
+metadata:
+  name: mcp-client-id
+spec:
+  className: "default"
+  spiffeIDTemplate: "spiffe://example.org/ns/{{ .PodMeta.Namespace }}/sa/{{ .PodSpec.ServiceAccountName }}"
+  podSelector:
+    matchLabels:
+      app: mcp-client
+  jwtTTL: "5m"
+  namespaceSelector:
+    matchLabels:
+      kubernetes.io/metadata.name: mcp-demo</code></pre>
+
+  <h3>5.2 Deploy MCP Workloads</h3>
+  <pre><code class="language-bash">kubectl apply -f manifests/mcp-client.yaml
+kubectl apply -f manifests/mcp-server.yaml
+kubectl -n mcp-demo wait --for=condition=ready pod -l app=mcp-client --timeout=120s</code></pre>
+
+  <h3>5.3 Run the Demo</h3>
+  <pre><code class="language-bash"># Run the SPIFFE authentication demo script
+kubectl -n mcp-demo exec -it deploy/mcp-client -- bash /scripts/test-spiffe-auth.sh</code></pre>
+
+  <h3>5.4 Run Full Test Suite</h3>
+  <pre><code class="language-bash"># Deploy test runner and run all 80 tests
+kubectl apply -f manifests/test-runner.yaml
+./scripts/run-all-tests.sh</code></pre>
+
+  <h3>5.5 Validation Gate</h3>
+  <pre><code class="language-bash"># MCP client can fetch SVID
+kubectl -n mcp-demo exec deploy/mcp-client -- \
+  python3 -c "
+from spiffe import WorkloadApiClient
+c = WorkloadApiClient('unix:///spiffe-workload-api/spire-agent.sock')
+s = c.fetch_jwt_svid(audience={'test'})
+print(s.spiffe_id)
+"
+# Should print: spiffe://example.org/ns/mcp-demo/sa/mcp-client</code></pre>
+
+  <!-- One-Command Deploy -->
+  <h2>One-Command Alternative</h2>
+  <p>If you prefer to deploy everything at once:</p>
+  <pre><code class="language-bash"># Runs all 5 phases sequentially with validation
+./deploy-all.sh
+
+# Teardown when done
+./teardown.sh</code></pre>
+
+</main>
+
+<footer class="footer">
+  <p>SPIFFE + MCP OAuth Authentication System &mdash; <a href="index.html">Home</a></p>
+</footer>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-bash.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-yaml.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-python.min.js"></script>
+</body>
+</html>

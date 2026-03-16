@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Troubleshooting &mdash; SPIFFE + MCP OAuth</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-okaidia.min.css">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<nav class="nav">
+  <div class="nav-inner">
+    <span class="nav-brand">SPIFFE + MCP OAuth</span>
+    <button class="hamburger" onclick="document.querySelector('.nav-links').classList.toggle('open')" aria-label="Menu">&#9776;</button>
+    <div class="nav-links">
+      <a href="index.html">Home</a>
+      <a href="concepts.html">Concepts</a>
+      <a href="architecture.html">Architecture</a>
+      <a href="deployment.html">Deployment</a>
+      <a href="auth-flows.html">Auth Flows</a>
+      <a href="troubleshooting.html" class="active">Troubleshooting</a>
+      <a href="testing.html">Testing</a>
+      <a href="product-manual.html">Product Manual</a>
+    </div>
+  </div>
+</nav>
+
+<main class="container">
+  <div class="breadcrumb"><a href="index.html">Home</a> &raquo; Troubleshooting &mdash; 12 Issues Solved</div>
+
+  <h1>Troubleshooting &mdash; 12 Issues Solved</h1>
+  <p>Every implementation issue encountered during deployment, documented with symptom, root cause, fix, and affected files.</p>
+
+  <!-- General Debugging Approach -->
+  <h2>General Debugging Approach</h2>
+  <div class="callout callout-info">
+    <strong>Tiered diagnosis &mdash; do not blindly retry failed commands.</strong>
+  </div>
+  <pre><code class="language-bash"># Tier 1 (5s): Check pod status
+kubectl get pods -n &lt;namespace&gt; | grep -v Running
+
+# Tier 2 (10s): Check events
+kubectl get events -n &lt;namespace&gt; --sort-by=.lastTimestamp | tail -10
+
+# Tier 3 (15s): Check logs
+kubectl logs &lt;pod&gt; --tail=30 -n &lt;namespace&gt;
+
+# Tier 4 (30s): Full resource details
+kubectl describe &lt;resource&gt; -n &lt;namespace&gt; | tail -40</code></pre>
+
+  <!-- Issue 1 -->
+  <h2>Implementation Issues</h2>
+
+  <div class="issue-card">
+    <div class="issue-header">
+      <span class="issue-num">1</span>
+      <span>ImagePullBackOff on keycloak-spiffe</span>
+    </div>
+    <div class="issue-body">
+      <dt>Symptom</dt>
+      <dd>Keycloak pod stuck in <code>ImagePullBackOff</code> or <code>ErrImagePull</code> state after applying keycloak.yaml.</dd>
+      <dt>Root Cause</dt>
+      <dd>The custom <code>keycloak-spiffe:latest</code> image was built locally but not loaded into the Kind cluster. Kind nodes cannot pull from the local Docker daemon directly.</dd>
+      <dt>Fix</dt>
+      <dd><pre><code class="language-bash">kind load docker-image keycloak-spiffe:latest --name spiffe-mcp-demo
+kubectl -n mcp-demo delete pod -l app=keycloak  # Force re-pull</code></pre></dd>
+      <dt>Affected Files</dt>
+      <dd><code>manifests/keycloak.yaml</code> &mdash; uses <code>imagePullPolicy: Never</code> to prevent pulling from registry</dd>
+    </div>
+  </div>
+
+  <div class="issue-card">
+    <div class="issue-header">
+      <span class="issue-num">2</span>
+      <span>SPIRE Agent CrashLoopBackOff</span>
+    </div>
+    <div class="issue-body">
+      <dt>Symptom</dt>
+      <dd>SPIRE Agent pods in <code>CrashLoopBackOff</code> immediately after Helm install.</dd>
+      <dt>Root Cause</dt>
+      <dd>SPIRE Agent requires a healthy SPIRE Server to complete node attestation. During initial deployment, the Server takes 30-60s to become ready, and the Agent crashes during that window.</dd>
+      <dt>Fix</dt>
+      <dd>Wait 60 seconds. The Agent will auto-recover once the Server is healthy. Verify with:
+      <pre><code class="language-bash">kubectl -n spire-system get pods -w  # Watch until all Running</code></pre></dd>
+      <dt>Affected Files</dt>
+      <dd><code>infra/spire-values.yaml</code> &mdash; Agent liveness probes handle restart</dd>
+    </div>
+  </div>
+
+  <div class="issue-card">
+    <div class="issue-header">
+      <span class="issue-num">3</span>
+      <span>CSI Driver FailedMount</span>
+    </div>
+    <div class="issue-body">
+      <dt>Symptom</dt>
+      <dd>MCP Client pod stuck in <code>ContainerCreating</code> with <code>FailedMount</code> event for <code>spiffe-workload-api</code> volume.</dd>
+      <dt>Root Cause</dt>
+      <dd>The SPIFFE CSI Driver or SPIRE Agent DaemonSet was not running on the node where the pod was scheduled.</dd>
+      <dt>Fix</dt>
+      <dd><pre><code class="language-bash"># Check CSI driver and agent are on all nodes
+kubectl -n spire-system get ds
+# Verify the worker node has the spire-agent label
+kubectl get nodes --show-labels | grep spire-agent</code></pre></dd>
+      <dt>Affected Files</dt>
+      <dd><code>infra/kind-config.yaml</code> &mdash; worker node needs <code>spire-agent: "true"</code> label</dd>
+    </div>
+  </div>
+
+  <div class="issue-card">
+    <div class="issue-header">
+      <span class="issue-num">4</span>
+      <span>Keycloak Connection Refused to PostgreSQL</span>
+    </div>
+    <div class="issue-body">
+      <dt>Symptom</dt>
+      <dd>Keycloak logs show <code>Connection refused</code> to <code>postgres.mcp-demo.svc.cluster.local:5432</code>.</dd>
+      <dt>Root Cause</dt>
+      <dd>Keycloak started before PostgreSQL was ready. The StatefulSet has no dependency ordering.</dd>
+      <dt>Fix</dt>
+      <dd>Always deploy and wait for PostgreSQL first:
+      <pre><code class="language-bash">kubectl apply -f manifests/postgres.yaml
+kubectl -n mcp-demo wait --for=condition=ready pod -l app=postgres --timeout=120s
+# Then deploy Keycloak</code></pre></dd>
+      <dt>Affected Files</dt>
+      <dd><code>deploy-all.sh</code> &mdash; enforces ordering</dd>
+    </div>
+  </div>
+
+  <div class="issue-card">
+    <div class="issue-header">
+      <span class="issue-num">5</span>
+      <span>OIDC Discovery Returns 404</span>
+    </div>
+    <div class="issue-body">
+      <dt>Symptom</dt>
+      <dd><code>curl http://localhost:30443/.well-known/openid-configuration</code> returns 404 or connection refused.</dd>
+      <dt>Root Cause</dt>
+      <dd>The OIDC Discovery Provider pod was not running, or the NodePort service was not applied.</dd>
+      <dt>Fix</dt>
+      <dd><pre><code class="language-bash"># Check OIDC provider pod
+kubectl -n spire-system get pods | grep oidc
+# Apply NodePort if missing
+kubectl apply -f manifests/oidc-nodeport.yaml</code></pre></dd>
+      <dt>Affected Files</dt>
+      <dd><code>manifests/oidc-nodeport.yaml</code>, <code>infra/spire-values.yaml</code> (domains config)</dd>
+    </div>
+  </div>
+
+  <div class="issue-card">
+    <div class="issue-header">
+      <span class="issue-num">6</span>
+      <span>client-spiffe-jwt Provider Not Found in Keycloak</span>
+    </div>
+    <div class="issue-body">
+      <dt>Symptom</dt>
+      <dd>Running <code>configure-keycloak.sh</code> fails with "Execution not found" when adding the SPIFFE authenticator.</dd>
+      <dt>Root Cause</dt>
+      <dd>The custom SPI JARs were not properly copied into <code>/opt/keycloak/providers/</code> during the Docker build, or <code>kc.sh build</code> was not run.</dd>
+      <dt>Fix</dt>
+      <dd>Rebuild the Keycloak image ensuring the COPY and RUN build steps succeed:
+      <pre><code class="language-bash">docker build --no-cache -f docker/Dockerfile.keycloak-custom -t keycloak-spiffe:latest .
+kind load docker-image keycloak-spiffe:latest --name spiffe-mcp-demo
+kubectl -n mcp-demo rollout restart statefulset/keycloak</code></pre></dd>
+      <dt>Affected Files</dt>
+      <dd><code>docker/Dockerfile.keycloak-custom</code></dd>
+    </div>
+  </div>
+
+  <div class="issue-card">
+    <div class="issue-header">
+      <span class="issue-num">7</span>
+      <span>Token Exchange Returns 400: Invalid client_assertion_type</span>
+    </div>
+    <div class="issue-body">
+      <dt>Symptom</dt>
+      <dd>Token request returns <code>400 Bad Request</code> with "invalid client_assertion_type" error.</dd>
+      <dt>Root Cause</dt>
+      <dd>The <code>client_assertion_type</code> value must exactly match what the SPI expects. The spec references both <code>jwt-spiffe</code> and <code>jwt-bearer</code> variants.</dd>
+      <dt>Fix</dt>
+      <dd>The SPI uses <code>urn:ietf:params:oauth:client-assertion-type:jwt-bearer</code> as the assertion type. The realm's authentication flow must include the <code>client-spiffe-jwt</code> execution as ALTERNATIVE:
+      <pre><code class="language-bash">./scripts/configure-keycloak.sh  # Sets up the flow correctly</code></pre></dd>
+      <dt>Affected Files</dt>
+      <dd><code>scripts/configure-keycloak.sh</code>, <code>scripts/test-spiffe-auth.sh</code></dd>
+    </div>
+  </div>
+
+  <div class="issue-card">
+    <div class="issue-header">
+      <span class="issue-num">8</span>
+      <span>Single-Use Token Rejection (Replay Detection)</span>
+    </div>
+    <div class="issue-body">
+      <dt>Symptom</dt>
+      <dd>First token request succeeds, but subsequent requests with the same JWT SVID return <code>400</code> or <code>401</code>.</dd>
+      <dt>Root Cause</dt>
+      <dd>The SPIFFE SPI enforces single-use tokens using <code>issuer+subject+iat</code> as a replay detection key. If two requests share the same <code>iat</code> (issued-at timestamp, second precision), the second is rejected.</dd>
+      <dt>Fix</dt>
+      <dd>Fetch a fresh JWT SVID for each token request. Add a 1-second delay between requests to ensure different <code>iat</code> values:
+      <pre><code class="language-python">import time, uuid
+time.sleep(1)  # Ensure unique iat
+svid = client.fetch_jwt_svid(
+    audience={audience, f"nonce-{uuid.uuid4().hex[:8]}"}
+)</code></pre></dd>
+      <dt>Affected Files</dt>
+      <dd><code>tests/test_05_auth_flows.py</code>, <code>tests/test_06_e2e_flows.py</code>, <code>tests/test_07_chaos.py</code></dd>
+    </div>
+  </div>
+
+  <div class="issue-card">
+    <div class="issue-header">
+      <span class="issue-num">9</span>
+      <span>Keycloak JWKS URL Misconfiguration</span>
+    </div>
+    <div class="issue-body">
+      <dt>Symptom</dt>
+      <dd>Token exchange fails with a signature verification error in Keycloak logs.</dd>
+      <dt>Root Cause</dt>
+      <dd>The SPIFFE client in Keycloak had the wrong JWKS URL configured. It needs to point to the OIDC Discovery Provider's <em>HTTP proxy</em> (not the HTTPS endpoint directly), because the internal service may have self-signed TLS.</dd>
+      <dt>Fix</dt>
+      <dd>The configure-keycloak.sh script sets the correct URL:
+      <pre><code class="language-bash">JWKS_URL="http://oidc-http-proxy.spire-system.svc.cluster.local/keys"</code></pre>
+      Set on both the realm attributes (<code>spiffe.jwks.url</code>) and the client attributes (<code>jwks.url</code>, <code>use.jwks.url=true</code>).</dd>
+      <dt>Affected Files</dt>
+      <dd><code>scripts/configure-keycloak.sh</code>, <code>manifests/realm-config.json</code></dd>
+    </div>
+  </div>
+
+  <div class="issue-card">
+    <div class="issue-header">
+      <span class="issue-num">10</span>
+      <span>Helm Install Timeout on PVC Provisioning</span>
+    </div>
+    <div class="issue-body">
+      <dt>Symptom</dt>
+      <dd><code>helm upgrade --install spire</code> hangs and eventually times out.</dd>
+      <dt>Root Cause</dt>
+      <dd>SPIRE Server needs a PVC, and Kind needs a default StorageClass. If none exists, PVC stays Pending forever.</dd>
+      <dt>Fix</dt>
+      <dd><pre><code class="language-bash"># Verify default StorageClass exists
+kubectl get sc
+# Kind usually creates "standard" as default. If missing:
+kubectl annotate sc standard storageclass.kubernetes.io/is-default-class=true</code></pre></dd>
+      <dt>Affected Files</dt>
+      <dd><code>infra/spire-values.yaml</code> &mdash; persistence section</dd>
+    </div>
+  </div>
+
+  <div class="issue-card">
+    <div class="issue-header">
+      <span class="issue-num">11</span>
+      <span>Keycloak Health Endpoint on Port 9000</span>
+    </div>
+    <div class="issue-body">
+      <dt>Symptom</dt>
+      <dd><code>curl http://localhost:30080/health/ready</code> returns 404 even though Keycloak is running.</dd>
+      <dt>Root Cause</dt>
+      <dd>Keycloak 26.x moved the management/health endpoints to port 9000 by default. The NodePort service only exposes port 8080.</dd>
+      <dt>Fix</dt>
+      <dd>Use the realm endpoint to verify health instead:
+      <pre><code class="language-bash"># This works on port 8080:
+curl -s http://localhost:30080/realms/master | jq .realm
+# Returns "master" if healthy</code></pre>
+      The readinessProbe in keycloak.yaml uses <code>/health/ready</code> on port 8080, which works because Keycloak still serves this path on the main port in dev mode.</dd>
+      <dt>Affected Files</dt>
+      <dd><code>manifests/keycloak.yaml</code> (readinessProbe), test files</dd>
+    </div>
+  </div>
+
+  <div class="issue-card">
+    <div class="issue-header">
+      <span class="issue-num">12</span>
+      <span>Audience Mismatch Between SVID and Keycloak</span>
+    </div>
+    <div class="issue-body">
+      <dt>Symptom</dt>
+      <dd>Token exchange returns 401 with "audience mismatch" even with a valid SVID.</dd>
+      <dt>Root Cause</dt>
+      <dd>The JWT SVID's <code>aud</code> claim must match the Keycloak realm's issuer URL. If you request the SVID with <code>audience=http://localhost:30080/realms/mcp-demo</code> (host URL) but the SPI checks against the internal URL, they won't match.</dd>
+      <dt>Fix</dt>
+      <dd>Fetch the audience dynamically from Keycloak's OIDC discovery:
+      <pre><code class="language-python">resp = requests.get(f"{KC_URL}/realms/{REALM}/.well-known/openid-configuration")
+audience = resp.json()["issuer"]  # Use this as the SVID audience</code></pre></dd>
+      <dt>Affected Files</dt>
+      <dd><code>tests/test_04_jwt_svid.py</code>, <code>tests/test_05_auth_flows.py</code></dd>
+    </div>
+  </div>
+
+  <!-- Quick Reference -->
+  <h2>Common Failure Quick Reference</h2>
+  <table>
+    <thead>
+      <tr><th>Symptom</th><th>Quick Fix</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>ImagePullBackOff</code></td><td><code>kind load docker-image &lt;image&gt; --name spiffe-mcp-demo</code></td></tr>
+      <tr><td>Agent <code>CrashLoopBackOff</code></td><td>Wait 60s for Server to be ready</td></tr>
+      <tr><td>CSI <code>FailedMount</code></td><td>Check SPIRE Agent DaemonSet is running on node</td></tr>
+      <tr><td>Keycloak Connection refused</td><td>Wait for PostgreSQL readiness</td></tr>
+      <tr><td>OIDC 404</td><td><code>kubectl apply -f manifests/oidc-nodeport.yaml</code></td></tr>
+      <tr><td>Token 400 assertion_type</td><td>Run <code>./scripts/configure-keycloak.sh</code></td></tr>
+      <tr><td>Token 400/401 replay</td><td>Fetch fresh SVID per request (1s delay)</td></tr>
+      <tr><td>JWKS verification failed</td><td>Check JWKS URL points to HTTP proxy</td></tr>
+      <tr><td>Helm timeout</td><td>Check <code>kubectl get sc</code> for default StorageClass</td></tr>
+      <tr><td>Health 404</td><td>Use <code>/realms/master</code> instead of <code>/health/ready</code></td></tr>
+      <tr><td>Audience mismatch</td><td>Fetch audience from OIDC discovery dynamically</td></tr>
+    </tbody>
+  </table>
+
+</main>
+
+<footer class="footer">
+  <p>SPIFFE + MCP OAuth Authentication System &mdash; <a href="index.html">Home</a></p>
+</footer>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-bash.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-python.min.js"></script>
+</body>
+</html>

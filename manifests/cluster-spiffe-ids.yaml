@@ -1,0 +1,43 @@
+apiVersion: spire.spiffe.io/v1alpha1
+kind: ClusterSPIFFEID
+metadata:
+  name: mcp-client-id
+spec:
+  className: "spire-system-spire"
+  spiffeIDTemplate: "spiffe://example.org/ns/{{ .PodMeta.Namespace }}/sa/{{ .PodSpec.ServiceAccountName }}"
+  podSelector:
+    matchLabels:
+      app: mcp-client
+  jwtTtl: "5m"
+  namespaceSelector:
+    matchLabels:
+      kubernetes.io/metadata.name: mcp-demo
+---
+apiVersion: spire.spiffe.io/v1alpha1
+kind: ClusterSPIFFEID
+metadata:
+  name: mcp-server-id
+spec:
+  className: "spire-system-spire"
+  spiffeIDTemplate: "spiffe://example.org/ns/{{ .PodMeta.Namespace }}/sa/{{ .PodSpec.ServiceAccountName }}"
+  podSelector:
+    matchLabels:
+      app: mcp-server
+  namespaceSelector:
+    matchLabels:
+      kubernetes.io/metadata.name: mcp-demo
+---
+apiVersion: spire.spiffe.io/v1alpha1
+kind: ClusterSPIFFEID
+metadata:
+  name: test-runner-id
+spec:
+  className: "spire-system-spire"
+  spiffeIDTemplate: "spiffe://example.org/ns/{{ .PodMeta.Namespace }}/sa/{{ .PodSpec.ServiceAccountName }}"
+  podSelector:
+    matchLabels:
+      app: test-runner
+  jwtTtl: "5m"
+  namespaceSelector:
+    matchLabels:
+      kubernetes.io/metadata.name: mcp-demo

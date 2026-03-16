@@ -1,0 +1,56 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: oidc-proxy-config
+  namespace: spire-system
+data:
+  default.conf: |
+    server {
+        listen 80;
+        location / {
+            proxy_pass https://spire-spiffe-oidc-discovery-provider.spire-system.svc.cluster.local;
+            proxy_ssl_verify off;
+            proxy_set_header Host spire-spiffe-oidc-discovery-provider.spire-system.svc.cluster.local;
+        }
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: oidc-http-proxy
+  namespace: spire-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: oidc-http-proxy
+  template:
+    metadata:
+      labels:
+        app: oidc-http-proxy
+    spec:
+      containers:
+        - name: nginx
+          image: nginx:alpine
+          ports:
+            - containerPort: 80
+          volumeMounts:
+            - name: config
+              mountPath: /etc/nginx/conf.d
+      volumes:
+        - name: config
+          configMap:
+            name: oidc-proxy-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: oidc-http-proxy
+  namespace: spire-system
+spec:
+  selector:
+    app: oidc-http-proxy
+  ports:
+    - port: 80
+      targetPort: 80
+      name: http
