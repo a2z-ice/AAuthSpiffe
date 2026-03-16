@@ -10,6 +10,10 @@
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="SPIFFE MCP OAuth Demo">
   <meta property="og:url" content="https://github.com/a2z-ice/AAuthSpiffe">
+  <meta property="og:image" content="https://raw.githubusercontent.com/a2z-ice/AAuthSpiffe/main/docs/banner.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="SPIFFE + MCP OAuth Architecture Diagram showing SPIRE, Keycloak, and MCP workloads in a Kind cluster">
   <!-- Prism.js for code highlighting -->
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-okaidia.min.css">
   <link rel="stylesheet" href="styles.css">
@@ -34,26 +38,39 @@
   </div>
 </nav>
 
-<!-- Hero Banner -->
-<header class="hero">
+<!-- Hero Banner with Architecture Diagram -->
+<header class="hero hero-visual">
   <div class="hero-inner">
-    <h1>SPIFFE + MCP OAuth</h1>
-    <p class="tagline">Zero-secret authentication for AI agents. Cryptographically verified workload identity replaces static client secrets &mdash; powered by SPIFFE/SPIRE, Keycloak, and the MCP protocol.</p>
-    <p style="margin-bottom:2rem;"><a href="https://github.com/a2z-ice/AAuthSpiffe" style="color:#1abc9c; border:1px solid rgba(255,255,255,.3); padding:.5rem 1.5rem; border-radius:6px; font-weight:600; text-decoration:none;">View on GitHub</a></p>
-    <div class="hero-badges">
-      <div class="badge">
-        <span class="num">5</span>
-        <span class="label">Deployment Phases</span>
+    <div class="hero-text-col">
+      <h1>SPIFFE + MCP OAuth</h1>
+      <p class="tagline">Zero-secret authentication for AI agents. Cryptographic workload identity replaces static client secrets.</p>
+      <div class="hero-cta">
+        <a href="https://github.com/a2z-ice/AAuthSpiffe" class="btn-primary">View on GitHub</a>
+        <a href="deployment.html" class="btn-secondary">Deploy Guide</a>
       </div>
-      <div class="badge">
-        <span class="num">80</span>
-        <span class="label">Automated Tests</span>
-      </div>
-      <div class="badge">
-        <span class="num">0</span>
-        <span class="label">Static Secrets</span>
+      <div class="hero-badges">
+        <div class="badge">
+          <span class="num">5</span>
+          <span class="label">Phases</span>
+        </div>
+        <div class="badge">
+          <span class="num">80</span>
+          <span class="label">Tests</span>
+        </div>
+        <div class="badge">
+          <span class="num">0</span>
+          <span class="label">Secrets</span>
+        </div>
+        <div class="badge">
+          <span class="num">5m</span>
+          <span class="label">SVID TTL</span>
+        </div>
       </div>
     </div>
+  </div>
+  <!-- Full-width architecture banner image -->
+  <div class="hero-banner-img">
+    <img src="banner.svg" alt="SPIFFE + MCP OAuth Architecture — SPIRE, Keycloak, MCP workloads in Kind cluster" width="1200" height="630">
   </div>
 </header>
 

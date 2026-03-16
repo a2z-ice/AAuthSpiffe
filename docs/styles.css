@@ -136,13 +136,23 @@ pre code {
 .hero {
   background: linear-gradient(135deg, var(--navy) 0%, #0f3460 50%, var(--teal-dark) 100%);
   color: #fff;
-  padding: 4rem 1.5rem;
+  padding: 3rem 1.5rem 0;
   text-align: center;
+  overflow: hidden;
+}
+
+.hero-visual {
+  padding-bottom: 0;
 }
 
 .hero-inner {
   max-width: var(--max-w);
   margin: 0 auto;
+}
+
+.hero-text-col {
+  max-width: 700px;
+  margin: 0 auto 2rem;
 }
 
 .hero h1 {
@@ -153,40 +163,99 @@ pre code {
 }
 
 .hero .tagline {
-  font-size: 1.2rem;
+  font-size: 1.15rem;
   opacity: .9;
-  margin-bottom: 2rem;
-  max-width: 700px;
-  margin-left: auto;
-  margin-right: auto;
+  margin-bottom: 1.5rem;
+  line-height: 1.6;
+}
+
+/* CTA buttons */
+.hero-cta {
+  display: flex;
+  justify-content: center;
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+  flex-wrap: wrap;
+}
+
+.btn-primary {
+  display: inline-block;
+  background: var(--teal);
+  color: #fff !important;
+  padding: .65rem 2rem;
+  border-radius: 6px;
+  font-weight: 700;
+  font-size: .95rem;
+  text-decoration: none !important;
+  transition: background .2s, transform .15s;
+  box-shadow: 0 4px 14px rgba(22,160,133,.35);
+}
+
+.btn-primary:hover {
+  background: var(--teal-dark);
+  transform: translateY(-1px);
+}
+
+.btn-secondary {
+  display: inline-block;
+  color: #fff !important;
+  padding: .65rem 2rem;
+  border-radius: 6px;
+  font-weight: 600;
+  font-size: .95rem;
+  text-decoration: none !important;
+  border: 1.5px solid rgba(255,255,255,.35);
+  transition: background .2s;
+}
+
+.btn-secondary:hover {
+  background: rgba(255,255,255,.1);
 }
 
 .hero-badges {
   display: flex;
   justify-content: center;
-  gap: 1.5rem;
+  gap: 1rem;
   flex-wrap: wrap;
 }
 
 .badge {
-  background: rgba(255,255,255,.15);
-  border: 1px solid rgba(255,255,255,.25);
+  background: rgba(255,255,255,.1);
+  border: 1px solid rgba(255,255,255,.2);
   border-radius: var(--radius);
-  padding: .75rem 1.5rem;
+  padding: .5rem 1.2rem;
   text-align: center;
   backdrop-filter: blur(4px);
+  min-width: 80px;
 }
 
 .badge .num {
   display: block;
-  font-size: 1.8rem;
+  font-size: 1.6rem;
   font-weight: 700;
   color: var(--teal-light);
+  line-height: 1.2;
 }
 
 .badge .label {
-  font-size: .85rem;
-  opacity: .85;
+  font-size: .78rem;
+  opacity: .8;
+}
+
+/* Full-width banner image */
+.hero-banner-img {
+  max-width: 1200px;
+  margin: 2rem auto 0;
+  border-radius: 12px 12px 0 0;
+  overflow: hidden;
+  box-shadow: 0 -4px 30px rgba(0,0,0,.4);
+  line-height: 0;
+}
+
+.hero-banner-img img {
+  width: 100%;
+  height: auto;
+  display: block;
 }
 
 /* ---------- Cards ---------- */
@@ -640,8 +709,13 @@ tbody tr:hover { background: #e8f5f1; }
   }
   .nav-links.open { display: flex; }
   .nav-links a { padding: .6rem 1rem; }
-  .hero h1 { font-size: 2rem; }
-  .hero .tagline { font-size: 1rem; }
+  .hero h1 { font-size: 1.8rem; }
+  .hero .tagline { font-size: .95rem; }
+  .hero-cta { gap: .5rem; }
+  .btn-primary, .btn-secondary { padding: .5rem 1.2rem; font-size: .85rem; }
+  .hero-banner-img { margin: 1rem -1rem 0; border-radius: 8px 8px 0 0; }
+  .badge { min-width: 65px; padding: .4rem .8rem; }
+  .badge .num { font-size: 1.3rem; }
   .ns-row { grid-template-columns: 1fr; }
   .card-grid { grid-template-columns: 1fr; }
   .seq-step { grid-template-columns: 1fr; gap: .25rem; }
