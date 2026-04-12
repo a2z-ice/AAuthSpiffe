@@ -19,6 +19,7 @@ The system authenticates MCP (Model Context Protocol) OAuth clients using crypto
   - `spiffe-dcr-keycloak` (Java) — Dynamic Client Registration using SPIFFE software statements
 - **SPIRE software-statements plugin** (Go) — CredentialComposer that enriches JWT SVIDs with DCR claims
 - **MCP Client/Server pods** (Python 3.12, namespace `mcp-demo`): Demo workloads
+- **OIDC HTTP Proxy** (nginx, namespace `spire-system`): Terminates TLS from the OIDC Discovery Provider so Keycloak can reach JWKS over plain HTTP inside the cluster
 - **PostgreSQL**: Keycloak backend datastore
 - Services exposed via **NodePort** + Kind `extraPortMappings` (no ingress controller or port-forward)
 
@@ -68,6 +69,21 @@ kind load docker-image keycloak-spiffe:latest --name spiffe-mcp-demo
 # Full deploy/teardown (once files are extracted from spec)
 ./deploy-all.sh
 ./teardown.sh
+
+# Configure Keycloak SPIFFE auth flow (after Keycloak is ready)
+./scripts/configure-keycloak.sh
+
+# Health check — quick pass/fail for all components
+./scripts/continuous-validation.sh
+
+# Run full test suite (executes inside test-runner pod)
+./scripts/run-all-tests.sh
+
+# Run a single test file inside the test-runner pod
+kubectl -n mcp-demo exec deploy/test-runner -- python3 -m pytest /tests/test_01_infrastructure.py -v
+
+# Run the SPIFFE auth demo (inside mcp-client pod)
+kubectl -n mcp-demo exec deploy/mcp-client -- bash /scripts/test-spiffe-auth.sh
 ```
 
 ## Operational Guidelines
@@ -115,3 +131,30 @@ Run these before proceeding to the next phase:
 - Keycloak host access: `http://localhost:30080`
 - OIDC Discovery host access: `http://localhost:30443`
 - Namespaces: `spire-system`, `mcp-demo`
+
+## Known Issues
+
+- **Keycloak 26 SPI incompatibility**: The `spiffe-svid-client-authenticator` SPI (`client-spiffe-jwt`) cannot resolve clients with SPIFFE URI clientIds on Keycloak 26. The `resolveClientId` method needs updating.
+- **SPIRE software-statements Go plugin**: Has build errors (missing `go.sum` entries) — was skipped during implementation.
+- **Keycloak health endpoint**: Responds on management port 9000, not the main port 8080. Use `http://localhost:30080/health/ready` from host (NodePort routes to 9000).
+
+## Test Suite
+
+Tests run inside a `test-runner` pod (namespace `mcp-demo`) using pytest. Test files are organized in layers:
+
+| File | Layer | What it validates |
+|------|-------|-------------------|
+| `test_01_infrastructure.py` | L1 | Kind cluster, DNS, storage, CSI driver |
+| `test_02_spire_components.py` | L2 | SPIRE Server, Agent, OIDC, Controller |
+| `test_03_keycloak.py` | L2 | Keycloak health, realm, SPIFFE client, SPIs |
+| `test_04_jwt_svid.py` | L3 | JWT structure, claims, crypto verification |
+| `test_05_auth_flows.py` | L3 | Client credentials, negative cases, DCR |
+| `test_06_e2e_flows.py` | L4 | Full chain, introspection, trust chain |
+| `test_07_chaos.py` | L5 | Resilience, pod restarts, concurrent load |
+| `test_08_security_hardening.py` | L5 | No secrets, isolation, JWKS security |
+
+Tests use `subprocess` to call `kubectl` and `requests` for HTTP assertions — they are not standard unit tests but in-cluster integration/e2e tests.
+
+## Documentation Site
+
+HTML docs are in `docs/` and deployed via GitHub Pages (`.github/workflows/static.yml`). Includes architecture diagrams, auth flow walkthroughs, deployment guide, and troubleshooting.
